@@ -46,10 +46,14 @@ async def _verify_one_claim(gw, client, tenant_id: str, text: str,
             span = await client.call("read_span", {"doc_id": doc_id, "span_id": span_id})
         except Exception:
             continue  # 引用不存在/越权 → 不计为通过
+        # evidence 返回的 span 可能用 "content" 或 "text" 字段
+        evidence_text = span.get("content") or span.get("text") or ""
+        if not evidence_text:
+            continue
         resp = await gw.complete(
             tenant_id=tenant_id, model=_S.model_haiku, system=VERIFY_SYSTEM,
             user_content=json.dumps(
-                {"claim": text, "evidence": span["content"]}, ensure_ascii=False),
+                {"claim": text, "evidence": evidence_text}, ensure_ascii=False),
             priority=Priority.VERIFY, max_tokens=64)
         t = "".join(b.text for b in resp.content if b.type == "text")
         try:
