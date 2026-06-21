@@ -9,7 +9,8 @@ from __future__ import annotations
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.core.auth import auth_context
@@ -34,6 +35,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LLM-Wiki Ingest", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def build_ingest_msg(
@@ -96,6 +105,18 @@ async def ingest(req: IngestReq, authorization: str = Header(...)):
     await _bus.submit(msg)
 
     return {"document_id": document_id, "status": "queued", "depth": req.depth}
+
+
+@app.get("/documents")
+async def list_docs(authorization: str = Header(...)):
+    """返回当前租户的所有文档列表(含状态)。"""
+    ctx, _role = auth_context(authorization)
+    async with _store.pool.acquire() as con:
+        rows = await con.fetch(
+            "SELECT document_id, title, status, depth, page_count, created_at "
+            "FROM documents WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 50",
+            ctx.tenant_id)
+    return [dict(r) for r in rows]
 
 
 @app.get("/documents/{document_id}/status")
