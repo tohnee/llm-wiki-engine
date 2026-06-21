@@ -1,0 +1,73 @@
+# 编译/执行类 worker 的隔离与扩缩。
+# 问答 agent(只读工具面)不需要本级隔离;此清单用于带 bash/文件系统的编译 agent。
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc           # gVisor;对外大规模推广建议这一级(或 Firecracker/Kata)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compile-worker
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: compile-worker } }
+  template:
+    metadata: { labels: { app: compile-worker } }
+    spec:
+      runtimeClassName: gvisor              # 执行隔离
+      automountServiceAccountToken: false
+      containers:
+        - name: worker
+          image: llmwiki:latest
+          command: ["python", "-m", "app.compile.run_worker"]
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true     # 根文件系统只读
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "1", memory: "2Gi" }
+            limits:   { cpu: "2", memory: "4Gi" }
+          volumeMounts:
+            - { name: work, mountPath: /work } # 只挂该 job 的租户工作目录(emptyDir)
+          env:
+            - { name: PG_DSN, valueFrom: { secretKeyRef: { name: llmwiki, key: pg_dsn } } }
+            - { name: REDIS_URL, value: "redis://redis:6379/0" }
+      volumes:
+        - { name: work, emptyDir: { sizeLimit: "2Gi" } }
+---
+# 出口白名单:仅允许访问 LLM Gateway / 对象存储 / MinerU,禁止其他出网
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: compile-worker-egress
+spec:
+  podSelector: { matchLabels: { app: compile-worker } }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: llm-gateway } }
+        - podSelector: { matchLabels: { app: minio } }
+        - podSelector: { matchLabels: { app: mineru } }
+    - ports:   # DNS
+        - { protocol: UDP, port: 53 }
+---
+# KEDA:按 compile 队列深度扩缩
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: compile-worker-scaler
+spec:
+  scaleTargetRef: { name: compile-worker }
+  minReplicaCount: 1
+  maxReplicaCount: 40
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: redis:6379
+        stream: "compile:L2"
+        consumerGroup: "workers"
+        pendingEntriesCount: "30"
