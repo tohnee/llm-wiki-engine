@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LLM-Wiki 知识引擎 · 完整设计文档</title>
+<style>
+  :root{
+    --bg:#F0EEE6; --surface:#FCFBF7; --surface-2:#F5F3EC; --line:#E3DFD3; --line-strong:#cdc9bd;
+    --ink:#2B2A27; --ink-2:#57544d; --ink-3:#8a8579;
+    --coral:#D97757; --coral-soft:#f3e0d7; --evidence:#4A6FA5; --evidence-soft:#e1e8f1;
+    --ext:#5f9b6b; --inf:#c79a3e; --amb:#cf5b54;
+    --mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:"Inter",-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.65;font-size:15px}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 28px}
+  header{padding:64px 0 40px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;color:var(--coral);text-transform:uppercase}
+  h1{font-size:42px;letter-spacing:-.025em;margin:14px 0 8px;font-weight:680}
+  .lede{font-size:18px;color:var(--ink-2);max-width:680px}
+  .mark{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--coral);color:#fff;font-weight:700;font-size:19px;vertical-align:middle;margin-right:10px}
+  nav.toc{position:sticky;top:0;background:rgba(240,238,230,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:12px 0;z-index:10;font-size:13px}
+  nav.toc a{color:var(--ink-2);text-decoration:none;margin-right:18px;white-space:nowrap}
+  nav.toc a:hover{color:var(--coral)}
+  section{padding:48px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:28px;letter-spacing:-.02em;margin:0 0 6px;font-weight:660}
+  .h2num{font-family:var(--mono);color:var(--coral);font-size:18px;margin-right:10px}
+  h3{font-size:18px;margin:30px 0 8px;font-weight:640}
+  p{color:var(--ink-2)}
+  code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:1px 6px;border-radius:4px;color:#7a4a36}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px;box-shadow:0 1px 2px rgba(43,42,39,.04),0 4px 18px rgba(43,42,39,.03);margin:18px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--ink-3);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td code{font-size:12px}
+  .pill{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line-strong);color:var(--ink-2)}
+  .pill.coral{background:var(--coral-soft);color:#a8472b;border-color:#ecd0c4}
+  .pill.blue{background:var(--evidence-soft);color:var(--evidence);border-color:#cdd9e8}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .legend{display:flex;gap:22px;flex-wrap:wrap;font-size:13px;color:var(--ink-2)}
+  svg{max-width:100%;height:auto}
+  .flow text{font-family:var(--sans);font-size:12px;fill:var(--ink)}
+  .flow .mono{font-family:var(--mono);font-size:10.5px;fill:var(--ink-3)}
+  .box{fill:var(--surface);stroke:var(--line-strong);stroke-width:1}
+  .box-c{fill:var(--coral-soft);stroke:#e7c3b3}
+  .box-b{fill:var(--evidence-soft);stroke:#cdd9e8}
+  .edge{stroke:var(--line-strong);stroke-width:1.4;fill:none;marker-end:url(#arr)}
+  ul{color:var(--ink-2)} li{margin:4px 0}
+  .kv{font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+  footer{padding:40px 0 80px;color:var(--ink-3);font-size:13px}
+  .tag-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  @media(max-width:720px){.grid2,.grid3{grid-template-columns:1fr}h1{font-size:32px}}
+</style>
+</head>
+<body>
+
+<header><div class="wrap">
+  <div class="eyebrow">Knowledge Engine · Design Document</div>
+  <h1><span class="mark">W</span>LLM-Wiki 知识引擎</h1>
+  <p class="lede">把文档<strong>编译</strong>成可导航、可追溯、有生命周期的知识,而非每次查询都重新检索。多租户、span 级证据、Claude Messages API 驱动。</p>
+  <div class="tag-row">
+    <span class="pill">Knowledge Compiler</span>
+    <span class="pill">span-grounded citations</span>
+    <span class="pill">memory lifecycle</span>
+    <span class="pill">multi-tenant</span>
+    <span class="pill coral">Claude Messages API</span>
+  </div>
+</div></header>
+
+<nav class="toc"><div class="wrap">
+  <a href="#overview">总览</a>
+  <a href="#engine">Wiki 引擎</a>
+  <a href="#lifecycle">记忆生命周期</a>
+  <a href="#retrieval">检索与取证</a>
+  <a href="#backend">后端服务</a>
+  <a href="#frontend">前端</a>
+  <a href="#data">数据模型</a>
+  <a href="#isolation">隔离与治理</a>
+  <a href="#deploy">部署</a>
+</div></nav>
+
+<!-- 总览 -->
+<section id="overview"><div class="wrap">
+  <h2><span class="h2num">01</span>总览与核心理念</h2>
+  <p>核心洞察(Karpathy llm-wiki):<strong>停止反复推导,开始编译</strong>。RAG 检索后即忘;wiki 累积并复利。本系统在此基础上吸收 llm-wiki v2 与 obsidian-wiki 的生产经验,把它做成<strong>企业级、多租户、有生命周期</strong>的知识引擎。</p>
+
+  <div class="card">
+    <strong>两层不变量(贯穿全系统)</strong>
+    <ul>
+      <li><strong>导航层可有损,证据层必须无损。</strong> Fact / Entity / Relation / Wiki 都是"答案在哪"的指针;原文 <code>span</code> 是唯一 citation 落点,回答"答案是什么"。<span class="pill blue">KG 指挥检索,而非取代检索</span></li>
+      <li><strong>tenant_id 由网关从 JWT 解出、服务端强制注入。</strong> agent、文档内容、请求体里任何 tenant 字段一律忽略。</li>
+    </ul>
+  </div>
+
+  <h3>系统拓扑</h3>
+  <svg class="flow" viewBox="0 0 920 360" role="img" aria-label="系统拓扑">
+    <defs><marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#cdc9bd"/></marker></defs>
+    <rect class="box box-c" x="20" y="20" width="150" height="44" rx="8"/><text x="95" y="40" text-anchor="middle">前端 React/Vite</text><text x="95" y="55" text-anchor="middle" class="mono">:5173</text>
+    <rect class="box" x="20" y="110" width="150" height="40" rx="8"/><text x="95" y="135" text-anchor="middle">query :8000</text>
+    <rect class="box" x="20" y="160" width="150" height="40" rx="8"/><text x="95" y="185" text-anchor="middle">admin :8002</text>
+    <rect class="box" x="20" y="210" width="150" height="40" rx="8"/><text x="95" y="235" text-anchor="middle">ingest :8003</text>
+    <rect class="box" x="20" y="260" width="150" height="40" rx="8"/><text x="95" y="285" text-anchor="middle">generation :8004</text>
+    <rect class="box box-b" x="340" y="150" width="160" height="44" rx="8"/><text x="420" y="170" text-anchor="middle">evidence :8001</text><text x="420" y="185" text-anchor="middle" class="mono">HMAC 内部鉴权</text>
+    <rect class="box" x="340" y="240" width="160" height="44" rx="8"/><text x="420" y="260" text-anchor="middle">compile-worker</text><text x="420" y="275" text-anchor="middle" class="mono">Redis Streams DAG</text>
+    <rect class="box" x="340" y="40" width="160" height="44" rx="8"/><text x="420" y="60" text-anchor="middle">LLM Gateway</text><text x="420" y="75" text-anchor="middle" class="mono">Messages API</text>
+    <rect class="box" x="660" y="60" width="150" height="40" rx="8"/><text x="735" y="85" text-anchor="middle">Postgres+pgvector</text>
+    <rect class="box" x="660" y="150" width="150" height="40" rx="8"/><text x="735" y="175" text-anchor="middle">Redis</text>
+    <rect class="box" x="660" y="240" width="150" height="40" rx="8"/><text x="735" y="265" text-anchor="middle">S3 / MinIO</text>
+    <path class="edge" d="M170,42 L170,130 L185,130"/><path class="edge" d="M170,130 L335,170"/>
+    <path class="edge" d="M170,230 L335,255"/>
+    <path class="edge" d="M500,172 L655,80"/><path class="edge" d="M500,172 L655,170"/>
+    <path class="edge" d="M500,262 L655,260"/><path class="edge" d="M500,262 L655,175"/>
+    <path class="edge" d="M420,150 L420,84"/>
+  </svg>
+  <p class="kv">对外服务用 JWT;调 evidence 用 HMAC 内部签名。模型调用全程 Messages API,<strong>多租户隔离发生在 LLM 之外的存储与鉴权层</strong>。</p>
+</div></section>
+
+<!-- Wiki 引擎 -->
+<section id="engine"><div class="wrap">
+  <h2><span class="h2num">02</span>Wiki 引擎:编译管线</h2>
+  <p>引擎把"PDF → 答案"拆成可并行、可增量、可分级的编译 DAG。每个单元 hash = <code>sha256(content + prompt_version + model_id)</code>,增量编译与 prompt 升级共用一套失效机制。</p>
+
+  <h3>编译 DAG(L0–L4)</h3>
+  <svg class="flow" viewBox="0 0 920 150" role="img" aria-label="编译DAG">
+    <defs><marker id="arr2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#cdc9bd"/></marker></defs>
+    <g>
+    <rect class="box" x="10" y="50" width="150" height="50" rx="8"/><text x="85" y="72" text-anchor="middle">L0 解析</text><text x="85" y="88" text-anchor="middle" class="mono">MinerU 分片</text>
+    <rect class="box" x="185" y="50" width="150" height="50" rx="8"/><text x="260" y="72" text-anchor="middle">L1 chunk/span</text><text x="260" y="88" text-anchor="middle" class="mono">embedding+摘要</text>
+    <rect class="box box-c" x="360" y="50" width="150" height="50" rx="8"/><text x="435" y="72" text-anchor="middle">L2 抽取</text><text x="435" y="88" text-anchor="middle" class="mono">Haiku · Batch</text>
+    <rect class="box" x="535" y="50" width="150" height="50" rx="8"/><text x="610" y="68" text-anchor="middle">L3 消歧+关系</text><text x="610" y="84" text-anchor="middle" class="mono">blocking+矛盾解决</text>
+    <rect class="box box-b" x="710" y="50" width="150" height="50" rx="8"/><text x="785" y="68" text-anchor="middle">L4 Wiki渲染</text><text x="785" y="84" text-anchor="middle" class="mono">仅 D2</text>
+    <path d="M160,75 L182,75" class="edge" marker-end="url(#arr2)"/>
+    <path d="M335,75 L357,75" class="edge" marker-end="url(#arr2)"/>
+    <path d="M510,75 L532,75" class="edge" marker-end="url(#arr2)"/>
+    <path d="M685,75 L707,75" class="edge" marker-end="url(#arr2)"/>
+    <text x="85" y="25" text-anchor="middle" class="mono">PDF/MD</text>
+    <text x="785" y="130" text-anchor="middle" class="mono">KG + Wiki 视图</text>
+    </g>
+  </svg>
+
+  <div class="grid3">
+    <div class="card"><strong>并行 + Streams</strong><p>每层 worker 无状态全并行,层间靠 Redis hash 计数器协调。<code>run_worker</code> 消费 <code>compile:L1</code>。</p></div>
+    <div class="card"><strong>增量 manifest</strong><p>记录源→派生产物(fact/entity/wiki),改动只重算受影响单元及其下游。</p></div>
+    <div class="card"><strong>分级深度</strong><p><span class="pill">D0</span> 分钟级可问 · <span class="pill">D1</span> +事实/实体 · <span class="pill">D2</span> +关系/Wiki</p></div>
+  </div>
+
+  <h3>成本工程</h3>
+  <table>
+    <tr><th>Pass</th><th>模型</th><th>通道</th><th>说明</th></tr>
+    <tr><td>L1/L2 抽取</td><td>Haiku</td><td>Batch API</td><td>量最大,成本减半、不占交互配额(≥30 chunk 触发)</td></tr>
+    <tr><td>L3 关系 / L4 Wiki</td><td>Sonnet</td><td>实时低优先级</td><td>量小、增量</td></tr>
+    <tr><td>prompt caching</td><td>—</td><td>—</td><td>同 chunk 多 pass 共享原文前缀,命中率目标 ≥70%</td></tr>
+  </table>
+
+  <h3>三层架构(对齐 v2)</h3>
+  <p><strong>raw</strong>(原文 span,不可变)/ <strong>wiki</strong>(AI 生成,仅视图)/ <strong>schema</strong>(规则层,每租户可配 taxonomy、关系类型、lint 阈值、自定义规则)。schema 是"最重要的文件"——把通用 LLM 变成有纪律的知识工作者。</p>
+</div></section>
+
+<!-- 记忆生命周期 -->
+<section id="lifecycle"><div class="wrap">
+  <h2><span class="h2num">03</span>记忆生命周期(v2 的"缺失层")</h2>
+  <p>把扁平的等权事实升级为有生命周期的活模型。这是相对 Karpathy 原版与 obsidian-wiki 的关键扩展。</p>
+
+  <div class="grid2">
+    <div class="card"><strong>置信度 confidence</strong><p>由<strong>来源数 + 最近确认 + 是否被矛盾</strong>共同决定。<code>1源≈0.5,3源≈0.75</code>;矛盾 ×0.5,过时 ×0.3。</p></div>
+    <div class="card"><strong>遗忘 forgetting</strong><p>Ebbinghaus 指数衰减 <code>retention = e^(−Δt/τ)</code>。架构类 τ=365 天(慢),瞬时状态类 τ=30 天(快)。</p></div>
+    <div class="card"><strong>强化 reinforcement</strong><p>同一 (主语,谓词,宾语) 再次被抽到 → <code>source_count++</code>、刷新确认时间、retention 重置为 1。</p></div>
+    <div class="card"><strong>取代 supersession</strong><p>矛盾解决:按 来源数/最近确认/retention 提议胜者,败者标 <code>stale + superseded_by</code>(版本化保留,不删)。</p></div>
+  </div>
+
+  <h3>巩固分层 consolidation tiers</h3>
+  <svg class="flow" viewBox="0 0 920 90">
+    <rect class="box" x="10" y="25" width="200" height="44" rx="8"/><text x="110" y="46" text-anchor="middle">working 原始观察</text><text x="110" y="61" text-anchor="middle" class="mono">会话内</text>
+    <rect class="box" x="245" y="25" width="200" height="44" rx="8"/><text x="345" y="46" text-anchor="middle">episodic 情景</text><text x="345" y="61" text-anchor="middle" class="mono">会话结束压缩</text>
+    <rect class="box box-c" x="480" y="25" width="200" height="44" rx="8"/><text x="580" y="46" text-anchor="middle">semantic 语义</text><text x="580" y="61" text-anchor="middle" class="mono">跨会话归并</text>
+    <rect class="box box-b" x="715" y="25" width="195" height="44" rx="8"/><text x="812" y="46" text-anchor="middle">procedural 工作流</text><text x="812" y="61" text-anchor="middle" class="mono">扩展位</text>
+    <path d="M210,47 L243,47" class="edge"/><path d="M445,47 L478,47" class="edge"/><path d="M680,47 L713,47" class="edge"/>
+  </svg>
+  <p class="kv">每升一层:更压缩、更高置信、更长寿。<code>crystallize</code> 把问答线程蒸馏成 wiki 页 + 回填事实(质量门控,on_query 异步触发)。</p>
+
+  <h3>事件钩子(自动化"记账")</h3>
+  <p class="kv">on_source · on_session_start · on_session_end · on_query · on_memory_write · on_schedule —— 把维护负担降到接近零,人只管思考。</p>
+</div></section>
+
+<!-- 检索与取证 -->
+<section id="retrieval"><div class="wrap">
+  <h2><span class="h2num">04</span>检索与取证</h2>
+  <p>navigation-first + span-grounded:KG 先缩小范围,检索保证细节,agent 多轮取证,verify 拦截幻觉。</p>
+  <h3>分层检索(成本随规模平坦)</h3>
+  <table>
+    <tr><th>层</th><th>动作</th><th>停止条件</th></tr>
+    <tr><td>tier-0</td><td>只读 ≤200 字摘要扫描(index-only 可强制)</td><td>摘要可答即停,标注"未读正文"</td></tr>
+    <tr><td>tier-1</td><td>BM25+向量 → RRF → cross-encoder rerank,按 tier 加权</td><td>span 级证据</td></tr>
+    <tr><td>tier-2</td><td>span → parent chunk 上下文扩展</td><td>补充上下文</td></tr>
+  </table>
+  <h3>KG 多跳导航</h3>
+  <p><code>navigate</code> 用 embedding 实体链接 → 沿 relations BFS 扩 1–2 跳 → 聚合邻域文档为 scope,并返回关系边。<code>/neighbors</code> 给子图,<code>/graph/export</code> 出 json/graphml/cypher/html。"项目为什么超预算"经 <code>项目→预算/实际成本/变更</code> 把关联文档全拉进来。</p>
+  <h3>取证循环 + 校验</h3>
+  <p class="kv">Router(Haiku 分流 simple/complex)→ Fast/Agentic tool loop(navigate/search/read_span/expand/lookup_entity/neighbors)→ verify 逐 claim NLI 校验 → 不足自动升级多跳。每条结论回链 <code>[doc:span]</code>。</p>
+</div></section>
+
+<!-- 后端服务 -->
+<section id="backend"><div class="wrap">
+  <h2><span class="h2num">05</span>后端服务与模块(46 个源文件)</h2>
+  <table>
+    <tr><th>域</th><th>模块</th><th>能力</th></tr>
+    <tr><td>鉴权/管理</td><td><code>core/auth · admin/service · db/auth_store · core/schema_layer</code></td><td>租户/用户/角色/schema 层</td></tr>
+    <tr><td>隔离/治理</td><td><code>core/tenant · core/governance · db/store</code></td><td>HMAC 注入 · 物理分区 · PII 脱敏 · 审计</td></tr>
+    <tr><td>编译</td><td><code>compile/{dag,orchestrator,manifest,contradiction} · workers/{l0–l4,summarize}</code></td><td>DAG · 增量 · Batch · 溯源 · 摘要</td></tr>
+    <tr><td>记忆</td><td><code>memory/{lifecycle,consolidation,crystallize,quality}</code></td><td>衰减/强化/取代 · 巩固 · 结晶 · 质量自愈</td></tr>
+    <tr><td>检索取证</td><td><code>evidence/{service,retrieval,tiered,graph_export}</code></td><td>分层检索 · KG · 导出 · status</td></tr>
+    <tr><td>查询</td><td><code>query/{gateway,pipeline,tools,verify,memory}</code></td><td>路由 · Fast+Agentic · verify · 会话记忆</td></tr>
+    <tr><td>生成</td><td><code>generation/{generate,render,service}</code></td><td>报告/图表/表格/PPT</td></tr>
+    <tr><td>维护</td><td><code>maintain/{lint,crosslink,cycle}</code> · <code>core/hooks,hook_handlers</code></td><td>体检 · cross-link · daily(衰减/巩固)· 事件</td></tr>
+    <tr><td>入库/LLM</td><td><code>ingest/service · llm/{gateway,embed}</code></td><td>入库→编译生产端 · Messages API 网关</td></tr>
+  </table>
+  <p class="kv">所有模型调用经 <code>llm/gateway</code> 的 <code>AsyncAnthropic</code>(Messages API);带 tenant 进 token bucket,但 LLM 不感知租户。</p>
+</div></section>
+
+<!-- 前端 -->
+<section id="frontend"><div class="wrap">
+  <h2><span class="h2num">06</span>前端(React + Vite · Claude 亮色科技)</h2>
+  <p>设计取向:忠于 Claude 暖白 <code>#F0EEE6</code> + 珊瑚 <code>#D97757</code>,但用<strong>双语义强调色 + 等宽数据层</strong>避开"暖白+衬线+陶土"的 AI 默认套路。</p>
+  <div class="legend card">
+    <span><span class="dot" style="background:var(--coral)"></span>珊瑚 = 动作</span>
+    <span><span class="dot" style="background:var(--evidence)"></span>证据蓝 = 仅用于引用/溯源</span>
+    <span><span class="dot" style="background:var(--ext)"></span>extracted</span>
+    <span><span class="dot" style="background:var(--inf)"></span>inferred</span>
+    <span><span class="dot" style="background:var(--amb)"></span>ambiguous</span>
+  </div>
+  <h3>视图(映射后端能力)</h3>
+  <div class="grid3">
+    <div class="card"><strong>问答</strong><p>对话 + 可点开的 <span class="pill blue">doc:span</span> 证据 chip + 校验% + 升级标记 + 会话记忆</p></div>
+    <div class="card"><strong>文档</strong><p>入库 + 深度(D0/D1/D2)+ 编译状态追踪</p></div>
+    <div class="card"><strong>知识图谱</strong><p>canvas 力导向图,点节点看实体与关系</p></div>
+    <div class="card"><strong>生成</strong><p>报告/图表/表格/PPT,内容或文件</p></div>
+    <div class="card"><strong>健康</strong><p>规模/hubs/孤立/矛盾比例 + 溯源图例</p></div>
+    <div class="card"><strong>管理</strong><p>租户/用户/角色/schema(平台管理员)</p></div>
+  </div>
+  <p class="kv">签名交互:把"引用必须落到原文 span"做成可点开的证据 chip。11 个 JSX 已通过 esbuild 编译校验。</p>
+</div></section>
+
+<!-- 数据模型 -->
+<section id="data"><div class="wrap">
+  <h2><span class="h2num">07</span>数据模型</h2>
+  <div class="grid2">
+    <div class="card"><strong>证据层(无损)</strong>
+      <p><code>Span</code> 100–300 token,citation 落点,带版面 bbox 回链。<code>Chunk</code> 800–1500 token 上下文单元,带 summary/tier。</p></div>
+    <div class="card"><strong>导航层(可有损)</strong>
+      <p><code>Fact</code>(SPO + qualifiers + provenance + 生命周期字段)· <code>Entity</code>(canonical + 跨文档 mention)· <code>Relation</code>(typed)· <code>WikiNode</code>(仅视图)。</p></div>
+  </div>
+  <div class="card"><strong>生命周期/治理表</strong>
+    <p class="kv">facts 含 <code>source_count / created_at / last_confirmed / retention / superseded_by / stale</code>;<code>conversations</code>(会话记忆)· <code>observations</code>(巩固分层)· <code>audit_log</code>(审计)· <code>tenants/users</code>(注册表)。核心 7 表按 tenant LIST 物理分区。</p></div>
+</div></section>
+
+<!-- 隔离与治理 -->
+<section id="isolation"><div class="wrap">
+  <h2><span class="h2num">08</span>多租户隔离与治理</h2>
+  <table>
+    <tr><th>维度</th><th>机制</th></tr>
+    <tr><td>租户隔离</td><td>① 7 表按 tenant LIST 物理分区 ② 服务端强制注入 tenant ③ 跨租户探测拦截(read_span 校验归属 + HMAC 防伪)</td></tr>
+    <tr><td>用户隔离</td><td>会话与记忆按 <code>tenant:user:session</code> 三元组分键;同租户内共享知识库(企业模型:知识共享、对话隔离)</td></tr>
+    <tr><td>会话隔离</td><td>Redis 热副本 + Postgres 持久副本,worker 无状态按键恢复</td></tr>
+    <tr><td>鉴权</td><td>JWT(pbkdf2 密码)对外;HMAC 签名 header 服务间;角色 admin/member/viewer</td></tr>
+    <tr><td>隐私</td><td>入库前 PII/密钥脱敏(API key/Bearer/邮箱/手机/身份证/私钥块)</td></tr>
+    <tr><td>审计</td><td>每个写操作留痕 audit_log(ingest/crystallize/supersede/daily…)</td></tr>
+    <tr><td>执行隔离</td><td>问答 agent 只读工具面免 sandbox;编译/执行 agent 上 gVisor pod + 出口白名单</td></tr>
+  </table>
+  <div class="card"><strong>多租户用 API 还是 Agent SDK?</strong><p>多租户隔离与用哪个 SDK <strong>无关</strong>——它是存储分区 + 鉴权 + 服务端 ACL 的架构问题,在 LLM 调用之外完成。模型调用全程 <code>@anthropic-ai/sdk</code> / <code>anthropic</code>(Messages API),<strong>不是</strong> Agent SDK。只有未来"agent 自主跑代码生成文件"才考虑 Agent SDK,且放进隔离 worker。</p></div>
+</div></section>
+
+<!-- 部署 -->
+<section id="deploy"><div class="wrap">
+  <h2><span class="h2num">09</span>部署</h2>
+  <p>本地:<code>docker compose up</code> 起 9 服务(pg/redis/minio/evidence/query/admin/ingest/compile-worker/generation),前端 <code>npm run dev</code>。生产:K8s,compile-worker 走 gVisor + KEDA 按流深扩缩,query 用 HPA;密钥入 Secret;PG/Redis 建议托管。</p>
+  <p class="kv">测试:离线冒烟 41 项(<code>make smoke</code>,CI 必跑)+ 前端 esbuild 编译校验 + 端到端集成矩阵(鉴权/跨租户/viewer 限权/渐进可问/多跳/PII/结晶/衰减)。详见《部署与测试工程文档》。</p>
+</div></section>
+
+<footer><div class="wrap">
+  LLM-Wiki 知识引擎 · 完整设计文档 · 在 Karpathy llm-wiki + llm-wiki v2 + obsidian-wiki 基础上扩展:记忆生命周期、巩固分层、结晶、质量自愈、事件自动化、隐私治理。<br/>
+  模型调用全程 Claude Messages API · 隔离在其外的存储与鉴权层 · span 级证据是细节不丢与结论可信的根基。
+</div></footer>
+
+</body>
+</html>
