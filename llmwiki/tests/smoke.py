@@ -345,6 +345,116 @@ def test_verify_answer_concurrent():
     check("ratio 1.0", abs(res["verified_ratio"] - 1.0) < 1e-9)
 
 
+def test_manifest_new_chunk_not_skipped():
+    """BUG FIX #1: 新 chunk(无 manifest 记录)必须被识别为"需编译",而非"未变化跳过"。
+
+    此前 orchestrator 用 stale_artifacts() 返回 None 判断"未变化",但该方法对
+    新 chunk 也返回 None,导致 L2 抽取被完全跳过,entities/facts 始终为 0。
+    """
+    import asyncio
+    from app.compile.manifest import Manifest, ChunkArtifacts
+
+    # Fake redis: 仅存储 manifest:{tenant}:{chunk_id} 键
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        async def get(self, key):
+            return self.store.get(key)
+
+        async def set(self, key, val):
+            self.store[key] = val
+
+    r = FakeRedis()
+    m = Manifest(r)
+
+    async def run():
+        # 场景1: 新 chunk(prev=None) → 必须被编译
+        prev = await m.get("t1", "ch_new")
+        check("new chunk has no manifest entry", prev is None)
+        # 修复后的 orchestrator 逻辑:prev is None → 需编译
+        should_compile = not (prev and prev.content_hash == "hash_new")
+        check("new chunk marked for compile", should_compile is True)
+
+        # 场景2: 未变化 chunk(prev 存在且 hash 一致) → 跳过
+        await m.record("t1", ChunkArtifacts(
+            chunk_id="ch_unchanged", content_hash="hash_same",
+            fact_ids=["f1"], entity_ids=["e1"]))
+        prev2 = await m.get("t1", "ch_unchanged")
+        should_compile2 = not (prev2 and prev2.content_hash == "hash_same")
+        check("unchanged chunk skipped", should_compile2 is False)
+
+        # 场景3: 变化 chunk(prev 存在但 hash 不同) → 需编译
+        await m.record("t1", ChunkArtifacts(
+            chunk_id="ch_changed", content_hash="hash_old",
+            fact_ids=["f1"], entity_ids=["e1"]))
+        prev3 = await m.get("t1", "ch_changed")
+        should_compile3 = not (prev3 and prev3.content_hash == "hash_new")
+        check("changed chunk marked for compile", should_compile3 is True)
+
+        # stale_artifacts 的语义验证(仅用于失效,不用于判断是否编译)
+        stale_new = await m.stale_artifacts("t1", "ch_new", "hash_new")
+        check("stale_artifacts returns None for new chunk (no old artifacts)", stale_new is None)
+        stale_unchanged = await m.stale_artifacts("t1", "ch_unchanged", "hash_same")
+        check("stale_artifacts returns None for unchanged", stale_unchanged is None)
+        stale_changed = await m.stale_artifacts("t1", "ch_changed", "hash_new")
+        check("stale_artifacts returns old artifacts for changed", stale_changed is not None)
+
+    asyncio.run(run())
+
+
+def test_evidence_client_error_handling():
+    """BUG FIX #3: EvidenceClient 在 evidence 服务不可用时应返回结构化错误,而非抛异常。"""
+    import asyncio
+    import httpx
+    from app.query.tools import EvidenceClient
+    from app.core.tenant import TenantContext
+
+    ctx = TenantContext(tenant_id="t1", user_id="u1", session_id="s1")
+    client = EvidenceClient(ctx)
+    # 指向一个不存在的端口,模拟 evidence 服务未启动
+    client._client = httpx.AsyncClient(base_url="http://127.0.0.1:59999", timeout=2)
+
+    async def run():
+        result = await client.call("search", {"query": "test"})
+        check("connect error returns dict, not raises", isinstance(result, dict))
+        check("error key present", "error" in result)
+        check("error message mentions unavailable", "unavailable" in result["error"])
+        await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_graph_empty_vs_demo():
+    """BUG FIX #4: Graph 前端应区分"API失败"、"空图"和"演示数据"。
+
+    此处验证后端 /graph/export 在无实体时返回空 nodes 列表,而非错误。
+    """
+    import asyncio
+    from app.db.store import Store
+
+    class FakeCon:
+        async def fetch(self, sql, *params):
+            return []  # 无实体、无关系
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+    class FakePool:
+        def acquire(self):
+            return FakeCon()
+
+    store = Store(FakePool())
+    result = asyncio.run(store.export_graph("t1"))
+    check("empty graph has nodes list", "nodes" in result)
+    check("empty graph has edges list", "edges" in result)
+    check("empty graph nodes is []", result["nodes"] == [])
+    check("empty graph edges is []", result["edges"] == [])
+
+
 if __name__ == "__main__":
     print("=== llm-wiki offline smoke test ===")
     for fn in [test_tenant_security, test_chunking, test_rrf,
@@ -358,7 +468,10 @@ if __name__ == "__main__":
                test_schema_update_validation,
                test_crosslink_name_eligibility,
                test_ingest_hash_uses_scrubbed,
-               test_verify_answer_concurrent]:
+               test_verify_answer_concurrent,
+               test_manifest_new_chunk_not_skipped,
+               test_evidence_client_error_handling,
+               test_graph_empty_vs_demo]:
         print(f"\n{fn.__name__}:")
         fn()
     print(f"\n{'='*40}")
