@@ -57,7 +57,10 @@ class TokenBucket:
 
 class LLMGateway:
     def __init__(self, concurrency: int = 16):
-        self.client = AsyncAnthropic(api_key=_S.anthropic_api_key)
+        kwargs = {"api_key": _S.anthropic_api_key}
+        if _S.anthropic_base_url:
+            kwargs["base_url"] = _S.anthropic_base_url
+        self.client = AsyncAnthropic(**kwargs)
         self._pq: asyncio.PriorityQueue[_Job] = asyncio.PriorityQueue()
         self._seq = 0
         self._sem = asyncio.Semaphore(concurrency)

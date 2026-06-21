@@ -67,7 +67,8 @@ class Store:
     async def upsert_spans(self, tenant_id: str, spans: list[Span]) -> None:
         rows = [
             (s.span_id, tenant_id, s.chunk_id, s.document_id, s.content, s.page,
-             list(s.bbox) if s.bbox else None, s.span_type.value, s.embedding)
+             list(s.bbox) if s.bbox else None, s.span_type.value,
+             str(s.embedding) if s.embedding else None)
             for s in spans
         ]
         async with self.pool.acquire() as con:
@@ -181,7 +182,8 @@ class Store:
         """block_keys: {entity_id: name_block}。mention/document 用数组并集合并。"""
         rows = [
             (e.entity_id, tenant_id, e.name, e.aliases, e.type, e.description,
-             e.mention_span_ids, e.document_ids, block_keys.get(e.entity_id, ""), e.embedding)
+             e.mention_span_ids, e.document_ids, block_keys.get(e.entity_id, ""),
+             str(e.embedding) if e.embedding else None)
             for e in entities
         ]
         async with self.pool.acquire() as con:
