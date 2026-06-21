@@ -236,7 +236,7 @@ class Store:
     async def get_span(self, tenant_id: str, span_id: str) -> Optional[dict]:
         async with self.pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT span_id,document_id,content,page,section_path "
+                "SELECT s.span_id, s.document_id, s.content, s.page, s.section_path "
                 "FROM spans s LEFT JOIN chunks c USING(tenant_id,chunk_id) "
                 "WHERE s.tenant_id=$1 AND s.span_id=$2",
                 tenant_id, span_id,

@@ -13,11 +13,21 @@ class Settings(BaseModel):
     s3_endpoint: str = os.getenv("S3_ENDPOINT", "http://localhost:9000")
     s3_bucket: str = os.getenv("S3_BUCKET", "llmwiki")
 
-    # --- Anthropic ---
+    # --- LLM ---
+    # provider: "anthropic" 或 "openai"(兼容 OpenAI 格式的第三方 API,如 GLM/Qwen/DeepSeek)
+    llm_provider: str = os.getenv("LLM_PROVIDER", "anthropic")
+    # LLM_MOCK=1 时使用 mock 响应(开发/测试用,不调用真实 API)
+    llm_mock: bool = os.getenv("LLM_MOCK", "0") == "1"
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     anthropic_base_url: str = os.getenv("ANTHROPIC_BASE_URL", "")  # 可选:第三方兼容 API 地址
+    # OpenAI 兼容模式(当 llm_provider="openai" 时使用)
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "")
     model_haiku: str = os.getenv("MODEL_HAIKU", "claude-haiku-4-5-20251001")
     model_sonnet: str = os.getenv("MODEL_SONNET", "claude-sonnet-4-6")
+    # LLM 调用超时与重试
+    llm_timeout: int = int(os.getenv("LLM_TIMEOUT", "180"))
+    llm_retries: int = int(os.getenv("LLM_RETRIES", "2"))
 
     # --- 编译参数 ---
     chunk_target_tokens: int = 1200          # parent chunk 目标大小
