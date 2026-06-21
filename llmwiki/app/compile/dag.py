@@ -88,7 +88,15 @@ class CompileBus:
 
     async def read(self, level: str, consumer: str, count: int = 8, block_ms: int = 5000):
         stream = STREAM.format(level=level)
-        res = await self.r.xreadgroup(GROUP, consumer, {stream: ">"}, count=count, block=block_ms)
+        try:
+            res = await self.r.xreadgroup(GROUP, consumer, {stream: ">"}, count=count, block=block_ms)
+        except aioredis.ResponseError as e:
+            if "NOGROUP" in str(e):
+                # stream 或 group 被删除,自动重建
+                await self.r.xgroup_create(stream, GROUP, id="0", mkstream=True)
+                res = await self.r.xreadgroup(GROUP, consumer, {stream: ">"}, count=count, block=block_ms)
+            else:
+                raise
         out = []
         if res:
             for _stream, entries in res:
