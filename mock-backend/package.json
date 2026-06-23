@@ -1,0 +1,15 @@
+{
+  "name": "llmwiki-mock-backend",
+  "version": "1.0.0",
+  "description": "纯 Node.js 内置 http 模块实现的 Mock 后端,覆盖前端所有 API 路径,零外部依赖。",
+  "private": true,
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
