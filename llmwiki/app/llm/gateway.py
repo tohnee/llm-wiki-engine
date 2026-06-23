@@ -179,15 +179,25 @@ class LLMGateway:
             })
 
         async def _call():
+            from app.core.observability import LLM_CALLS, LLM_LATENCY, LLM_CACHE_HITS, Timer
             self.calls += 1
             kwargs: dict[str, Any] = dict(
                 model=model, max_tokens=max_tokens, system=sys_blocks, messages=msgs)
             if tools:
                 kwargs["tools"] = tools
-            resp = await self.client.messages.create(**kwargs)
+            status = "ok"
+            try:
+                with Timer(LLM_LATENCY, model=model):
+                    resp = await self.client.messages.create(**kwargs)
+            except Exception:
+                status = "error"
+                LLM_CALLS.inc(model=model, priority=str(int(priority)), status=status)
+                raise
+            LLM_CALLS.inc(model=model, priority=str(int(priority)), status=status)
             usage = getattr(resp, "usage", None)
             if usage and getattr(usage, "cache_read_input_tokens", 0):
                 self.cache_hits += 1
+                LLM_CACHE_HITS.inc(model=model)
             return resp
 
         return await self._enqueue(priority, _call())

@@ -49,6 +49,12 @@ async def emit(event: Event, **kwargs) -> None:
         return
     results = await asyncio.gather(
         *(h(**kwargs) for h in handlers), return_exceptions=True)
+    try:
+        from app.core.observability import HOOK_FIRES
+        for r in results:
+            HOOK_FIRES.inc(event=event, status="error" if isinstance(r, Exception) else "ok")
+    except Exception:
+        pass  # observability 不可用时不影响 hook
     for r in results:
         if isinstance(r, Exception):
             # 钩子失败仅记录,不影响主流程
