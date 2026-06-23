@@ -53,8 +53,8 @@ async def rebuild_tenant(store: Store, bus: CompileBus, tenant_id: str) -> dict:
 
 async def daily_maintenance(store: Store, tenant_id: str, bus: CompileBus | None = None) -> dict:
     """每日维护(v2 Automation/on_schedule):
-    retention decay → lint 体检 → 自愈/人审 → cross-link → episodic→semantic 巩固。"""
-    from app.memory.consolidation import promote_to_semantic
+    retention decay → lint 体检 → 自愈/人审 → cross-link → episodic→semantic → semantic→procedural 巩固。"""
+    from app.memory.consolidation import promote_to_semantic, promote_to_procedural
     from app.memory.quality import self_heal_plan
     from app.core.governance import AuditLog
     from app.core.schema_layer import SchemaStore
@@ -85,12 +85,15 @@ async def daily_maintenance(store: Store, tenant_id: str, bus: CompileBus | None
 
     # 4) episodic→semantic 巩固
     promoted = await promote_to_semantic(store, tenant_id)
+    # 4b) semantic→procedural 抽取(可重复工作流识别)
+    proc = await promote_to_procedural(store, tenant_id)
 
     # 5) 审计留痕
     await AuditLog(store.pool).record(
         tenant_id, "daily_maintenance", detail={
             "decayed": decayed, "audited": len(findings),
-            "promoted_semantic": promoted, "crosslink": cl})
+            "promoted_semantic": promoted, "promoted_procedural": proc,
+            "crosslink": cl})
 
     return {
         "decayed_facts": decayed,
@@ -99,5 +102,44 @@ async def daily_maintenance(store: Store, tenant_id: str, bus: CompileBus | None
         "auto_fixable": len(low),
         "crosslink": cl,
         "promoted_semantic": promoted,
+        "promoted_procedural": proc,
         "top": [(f.entity_name, f.rule, round(f.priority, 2)) for f in findings[:10]],
     }
+
+
+# ---------------- on_schedule 调度器 ----------------
+import asyncio as _asyncio
+import os as _os
+
+
+async def run_scheduler(
+    store: Store, bus: CompileBus | None = None,
+    interval_sec: int | None = None, tenants: list[str] | None = None,
+) -> None:
+    """轻量调度循环:每 interval_sec 一次,对每个 tenant emit(ON_SCHEDULE)。
+
+    部署形态:作为独立进程(`python -m app.maintain.scheduler`)或注入到 compile-worker 副驾。
+    - interval_sec 默认 86400(每日)。可用环境变量 SCHEDULE_INTERVAL_SEC 覆盖。
+    - tenants 不传则取 DB 中所有租户。
+    - 失败任何一次循环不会中断 daemon,只 print 错误。
+    """
+    from app.core import hooks
+    from app.core.tenant import TenantContext
+
+    interval = interval_sec or int(_os.getenv("SCHEDULE_INTERVAL_SEC", "86400"))
+    print(f"[scheduler] start, interval={interval}s, tenants={tenants or 'auto'}", flush=True)
+    while True:
+        try:
+            if tenants is None:
+                async with store.pool.acquire() as con:
+                    rows = await con.fetch("SELECT DISTINCT tenant_id FROM documents")
+                tenant_list = [r["tenant_id"] for r in rows]
+            else:
+                tenant_list = list(tenants)
+            for t in tenant_list:
+                ctx = TenantContext(tenant_id=t, user_id="system", session_id="schedule")
+                # 同步触发,handler 内部可 emit_background 异步派发
+                await hooks.emit(hooks.ON_SCHEDULE, ctx=ctx, store=store, bus=bus)
+        except Exception as e:
+            print(f"[scheduler] loop iteration failed: {e}", flush=True)
+        await _asyncio.sleep(interval)

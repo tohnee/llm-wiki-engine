@@ -93,8 +93,14 @@ CREATE TABLE IF NOT EXISTS relations (
     target_entity    TEXT NOT NULL,
     source_span_ids  TEXT[] NOT NULL DEFAULT '{}',
     confidence       REAL NOT NULL DEFAULT 1.0,
+    source_count     INT  NOT NULL DEFAULT 1,           -- v2 关系级多源置信:重复抽到 ++
+    last_confirmed   DOUBLE PRECISION NOT NULL DEFAULT 0,
     PRIMARY KEY (tenant_id, relation_id)
 ) PARTITION BY LIST (tenant_id);
+
+-- 关系级多源置信去重键(同三元组只保留一条,新出现 → reinforce)
+CREATE INDEX IF NOT EXISTS relations_triple_idx ON relations
+    (tenant_id, source_entity, relation_type, target_entity);
 
 CREATE TABLE IF NOT EXISTS wiki_nodes (
     node_id     TEXT NOT NULL,

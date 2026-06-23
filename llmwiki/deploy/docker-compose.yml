@@ -94,6 +94,21 @@ services:
       MINERU_URL: ${MINERU_URL:-}
     depends_on: [postgres, redis]
 
+  scheduler:
+    # on_schedule 调度器:周期触发 daily_maintenance(decay / lint / crosslink / 巩固)
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: python -m app.maintain.scheduler
+    environment:
+      PG_DSN: postgresql://llmwiki:llmwiki@postgres:5432/llmwiki
+      REDIS_URL: redis://redis:6379/0
+      INTERNAL_HMAC_SECRET: dev-internal-secret
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      SCHEDULE_INTERVAL_SEC: ${SCHEDULE_INTERVAL_SEC:-86400}
+    depends_on: [postgres, redis]
+
   generation:
     build:
       context: ..

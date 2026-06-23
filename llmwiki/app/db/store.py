@@ -201,20 +201,45 @@ class Store:
             )
 
     async def upsert_relations(self, tenant_id: str, relations: list[Relation]) -> None:
-        rows = [
-            (r.relation_id, tenant_id, r.source_entity, r.relation_type,
-             r.target_entity, r.source_span_ids, r.confidence)
-            for r in relations
-        ]
+        """关系级多源置信(v2):同三元组(source,relation_type,target)只保留一条,
+        重复抽到则 source_count++、last_confirmed=now、confidence 按 1-1/(1+n) 重算、
+        合并 source_span_ids(去重)。新三元组则正常 INSERT。
+        """
+        import time as _t
+        if not relations:
+            return
+        now = _t.time()
         async with self.pool.acquire() as con:
-            await con.executemany(
-                """INSERT INTO relations
-                   (relation_id,tenant_id,source_entity,relation_type,target_entity,
-                    source_span_ids,confidence)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7)
-                   ON CONFLICT (tenant_id,relation_id) DO NOTHING""",
-                rows,
-            )
+            async with con.transaction():
+                for r in relations:
+                    existing = await con.fetchrow(
+                        """SELECT relation_id, source_count, source_span_ids
+                           FROM relations
+                           WHERE tenant_id=$1 AND source_entity=$2
+                             AND relation_type=$3 AND target_entity=$4
+                           LIMIT 1""",
+                        tenant_id, r.source_entity, r.relation_type, r.target_entity)
+                    if existing:
+                        new_n = (existing["source_count"] or 1) + 1
+                        merged_spans = list(dict.fromkeys(
+                            list(existing["source_span_ids"] or []) + list(r.source_span_ids or [])))
+                        new_conf = 1.0 - 1.0 / (1.0 + new_n)  # 与 fact 一致的多源置信公式
+                        await con.execute(
+                            """UPDATE relations
+                               SET source_count=$1, last_confirmed=$2,
+                                   source_span_ids=$3, confidence=$4
+                               WHERE tenant_id=$5 AND relation_id=$6""",
+                            new_n, now, merged_spans, new_conf,
+                            tenant_id, existing["relation_id"])
+                    else:
+                        await con.execute(
+                            """INSERT INTO relations
+                               (relation_id,tenant_id,source_entity,relation_type,target_entity,
+                                source_span_ids,confidence,source_count,last_confirmed)
+                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                               ON CONFLICT (tenant_id,relation_id) DO NOTHING""",
+                            r.relation_id, tenant_id, r.source_entity, r.relation_type,
+                            r.target_entity, r.source_span_ids, r.confidence, 1, now)
 
     async def upsert_wiki_nodes(self, tenant_id: str, nodes: list) -> None:
         rows = [

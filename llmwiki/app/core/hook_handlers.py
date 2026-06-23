@@ -4,6 +4,7 @@ on_query          → crystallize 回填(质量门控)
 on_session_start  → 加载近期 episodic 观察注入会话上下文
 on_session_end    → consolidate_session(working→episodic)
 on_memory_write   → 矛盾检查 + supersession(覆盖 crystallize 回填路径)
+on_schedule       → daily_maintenance(decay + lint + crosslink + procedural)
 """
 from __future__ import annotations
 
@@ -117,3 +118,21 @@ async def _check_contradictions_on_write(ctx, facts, **_):
         await AuditLog(store.pool).record(
             ctx.tenant_id, "contradiction_resolve", user_id=ctx.user_id,
             detail={"superseded": len(patches)})
+
+
+@hooks.on(hooks.ON_SCHEDULE)
+async def _daily_maintenance_on_schedule(ctx, store=None, bus=None, **_):
+    """调度器周期触发:跑 daily_maintenance(decay + lint + crosslink + 巩固)。
+
+    store/bus 由 scheduler 传入;若未传则按需自取(降级)。
+    daily_maintenance 内部已有 AuditLog 落档,这里只补一次 schedule_tick 审计便于排障。
+    """
+    from app.maintain.cycle import daily_maintenance
+    s = store or await _get_store()
+    try:
+        result = await daily_maintenance(s, ctx.tenant_id, bus=bus)
+        await AuditLog(s.pool).record(
+            ctx.tenant_id, "schedule_tick", user_id="system",
+            detail={"summary": {k: v for k, v in result.items() if k != "top"}})
+    except Exception as e:
+        print(f"[on_schedule] daily_maintenance failed for {ctx.tenant_id}: {e}", flush=True)
