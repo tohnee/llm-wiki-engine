@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { auth } from "./api.js";
+import { auth, IS_DEMO } from "./api.js";
 import Login from "./views/Login.jsx";
 import Documents from "./views/Documents.jsx";
 import Graph from "./views/Graph.jsx";
@@ -17,9 +17,33 @@ const NAV = [
   { id: "admin", label: "管理", glyph: "⚙", desc: "租户与用户(平台管理员)", comp: Admin },
 ];
 
+function DemoBanner() {
+  return (
+    <div style={{
+      background: "linear-gradient(90deg, #fde68a 0%, #fcd34d 100%)",
+      color: "#78350f", padding: "10px 16px", fontSize: 13,
+      borderBottom: "1px solid #f59e0b", textAlign: "center",
+    }}>
+      <b>🎬 Demo 模式</b> · 这是 GitHub Pages 上的纯前端预览,后端 API 未连接,
+      所有数据展示均为静态/模拟。要真正使用问答能力,请按
+      <a href="https://github.com/tohnee/llm-wiki-engine#%E6%9C%AC%E5%9C%B0%E9%83%A8%E7%BD%B2"
+         target="_blank" rel="noreferrer" style={{ color: "#7c2d12", textDecoration: "underline" }}>
+        本地部署指南
+      </a>
+      启动 docker-compose 全栈。
+    </div>
+  );
+}
+
 export default function App() {
-  const [authed, setAuthed] = useState(!!auth.token);
+  // Demo 模式:自动注入一个 mock user 绕过 Login,直接进入 UI 预览
+  const [authed, setAuthed] = useState(!!auth.token || IS_DEMO);
   const [view, setView] = useState("documents");
+
+  if (IS_DEMO && !auth.user) {
+    // mock 一个用户进 UI;不存 token 避免误调 API
+    auth.user = { tenant_id: "demo", user_id: "guest" };
+  }
 
   if (!authed) return <Login onLogin={() => setAuthed(true)} />;
 
@@ -28,6 +52,7 @@ export default function App() {
 
   return (
     <div className="shell">
+      {IS_DEMO && <DemoBanner />}
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">W</div>

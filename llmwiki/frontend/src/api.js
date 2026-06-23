@@ -1,6 +1,21 @@
 // 后端 API 客户端。token 存内存 + localStorage;tenant/user 从登录响应得来。
 const TOKEN_KEY = "llmwiki_token";
 
+// API 前缀:
+//   - dev: 默认 ""(走 vite.config.js 的 /api/* proxy 到本地各服务端口)
+//   - prod: 通过 VITE_API_BASE_URL 注入,如 "https://api.example.com" 或 "/backend"
+//   生产构建时执行: VITE_API_BASE_URL=https://api.example.com npm run build
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
+// Demo 模式:VITE_DEMO_MODE=1 时表示这是一个纯前端预览(如 GitHub Pages),
+// 后端不可达。UI 应当展示横幅提示用户这是只读演示。
+export const IS_DEMO = (import.meta.env?.VITE_DEMO_MODE === "1");
+
+function url(path) {
+  // path 形如 "/api/query/ask";API_BASE 为空时保持相对路径走代理
+  return API_BASE ? `${API_BASE}${path}` : path;
+}
+
 export const auth = {
   get token() { return localStorage.getItem(TOKEN_KEY) || ""; },
   set token(t) { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); },
@@ -17,7 +32,7 @@ export const auth = {
 async function req(path, { method = "GET", body, headers = {}, admin } = {}) {
   const h = { "Content-Type": "application/json", ...headers };
   if (!admin && auth.token) h["Authorization"] = `Bearer ${auth.token}`;
-  const res = await fetch(path, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
+  const res = await fetch(url(path), { method, headers: h, body: body ? JSON.stringify(body) : undefined });
   if (!res.ok) {
     if (res.status === 401) auth.logout();  // token 过期,自动登出
     let detail = res.statusText;
