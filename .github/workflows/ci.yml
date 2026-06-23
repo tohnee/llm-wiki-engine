@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  smoke:
+    name: 离线冒烟 + 单元测试(无外部依赖)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: llmwiki
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install minimal deps (pure-python only)
+        run: |
+          python -m pip install --upgrade pip
+          # 单元/冒烟仅依赖 fastapi+pydantic+pyjwt+httpx;asyncpg/redis/anthropic 由 conftest stub
+          pip install pytest pytest-asyncio fastapi pydantic pyjwt httpx numpy
+
+      - name: Run smoke tests
+        run: python -m tests.smoke
+
+      - name: Run pytest unit tests
+        env:
+          APP_ENV: dev
+        run: pytest -m "not integration" -q
+
+  frontend-build:
+    name: 前端构建(verify Vite build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: llmwiki/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: llmwiki/frontend/package-lock.json
+      - run: npm ci
+      - name: Build with default base
+        run: npm run build
+
+  docker-yaml-lint:
+    name: 部署文件合法性
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyyaml
+      - name: Lint docker-compose + k8s yaml
+        run: |
+          python -c "
+          import yaml, glob
+          for f in ['llmwiki/deploy/docker-compose.yml',
+                   'llmwiki/deploy/k8s/core-services.yaml',
+                   'llmwiki/deploy/k8s/compile-worker.yaml']:
+              list(yaml.safe_load_all(open(f)))
+              print(f'OK: {f}')
+          "

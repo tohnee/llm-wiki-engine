@@ -10,6 +10,7 @@ import types
 # stub 重依赖与基础设施库,使离线冒烟测试无需安装 asyncpg/redis/anthropic/模型
 _embed = types.ModuleType("app.llm.embed")
 _embed.embed = lambda x: [[0.0] * 1024 for _ in x]
+_embed.embed_sync = lambda x: [[0.0] * 1024 for _ in x]
 _embed.rerank = lambda q, c: [(s, 1.0) for s, _ in c]
 sys.modules["app.llm.embed"] = _embed
 
