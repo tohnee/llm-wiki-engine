@@ -31,7 +31,8 @@ class TenantSchema:
     lint_inferred_ratio: float = 0.40
     lint_hub_inferred_ratio: float = 0.20
     default_depth: str = "D1"
-    summary_max_chars: int = 197
+    # 摘要硬上限(字符);生成时若超出会截断并加 "..." 后缀(后缀计入上限)
+    summary_max_chars: int = 200
     # 自定义维护规则(自由文本,注入编译 prompt,等价于 CLAUDE.md 里的自然语言规则)
     custom_rules: str = ""
 

@@ -13,6 +13,16 @@ from app.core.config import get_settings
 from app.models.schema import Chunk, Span, SpanType, content_hash
 from app.llm.embed import embed_sync
 
+
+def truncate_summary(text: str, max_chars: int = 200, ellipsis: str = "...") -> str:
+    """统一摘要截断:超过 max_chars 截断并加省略号(省略号计入上限)。
+    schema.summary_max_chars 控制硬上限,默认 200;summarize.py 与 l1_chunk_span.py 都用本函数。"""
+    s = (text or "").strip().replace("\n", " ")
+    if len(s) <= max_chars:
+        return s
+    keep = max(1, max_chars - len(ellipsis))
+    return s[:keep] + ellipsis
+
 _S = get_settings()
 
 # 粗略 token 估计(中英混合):字符数 / 2.5;生产换 tiktoken-like 计数
@@ -110,7 +120,7 @@ def build_chunks_and_spans(
                 chunk_id=chunk_id, tenant_id=tenant_id, document_id=document_id,
                 content=ctext, page_start=0, page_end=0,
                 section_path=section_path, content_hash=chash,
-                summary=(ctext.strip().replace("\n", " ")[:197] + "...") if len(ctext) > 200 else ctext.strip(),
+                summary=truncate_summary(ctext, max_chars=200),
             )
             sp_ids = []
             for stext, stype in _split_spans(ctext, _S.span_target_tokens):

@@ -10,12 +10,17 @@ import asyncio
 from app.core.config import get_settings
 from app.llm.gateway import get_gateway, Priority
 from app.models.schema import Chunk
+from app.compile.workers.l1_chunk_span import truncate_summary
 
 _S = get_settings()
 _SYS = "用一句不超过80字的中文摘要概括以下片段的核心内容,只输出摘要本身,不要前缀。"
 
 
-async def generate_summaries(tenant_id: str, chunks: list[Chunk], concurrency: int = 4) -> None:
+async def generate_summaries(
+    tenant_id: str, chunks: list[Chunk], concurrency: int = 4, max_chars: int = 200,
+) -> None:
+    """为变化 chunk 生成 LLM 语义摘要,覆盖 L1 的启发式 summary。
+    max_chars: 摘要硬上限,与 schema.summary_max_chars 一致(默认 200)。"""
     gw = get_gateway()
     sem = asyncio.Semaphore(concurrency)
 
@@ -28,7 +33,7 @@ async def generate_summaries(tenant_id: str, chunks: list[Chunk], concurrency: i
                     priority=Priority.COMPILE_REALTIME, max_tokens=128)
                 txt = "".join(b.text for b in resp.content if b.type == "text").strip()
                 if txt:
-                    c.summary = txt[:197]
+                    c.summary = truncate_summary(txt, max_chars=max_chars)
             except Exception as e:
                 print(f"[summarize] chunk {c.chunk_id} failed: {e}, keeping default summary", flush=True)
 

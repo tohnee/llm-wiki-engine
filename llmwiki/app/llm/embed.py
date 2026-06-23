@@ -21,7 +21,9 @@ _S = get_settings()
 _MOCK_EMBED = os.environ.get("EMBED_MOCK", "0") == "1"
 _EMBED_API_KEY = os.environ.get("EMBED_API_KEY", "") or os.environ.get("EMBEDDING_API_KEY", "")
 _EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "") or os.environ.get("EMBEDDING_BASE_URL", "")
-_EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-v2")  # DeepSeek 默认模型
+# 默认模型:BAAI/bge-m3(1024 维),与 schema.sql 的 vector(1024) 对齐。
+# 注意:DeepSeek 当前没有 embedding 接口;阿里百炼/硅基流动/Jina/Cohere 均提供 1024 维兼容选项。
+_EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
 
 # 默认 fallback: 复用 LLM provider 的 API key/base_url(仅当未单独配置 embedding 时)
 if not _EMBED_API_KEY:
@@ -47,21 +49,27 @@ async def _embed_openai(texts: list[str]) -> list[list[float]]:
     """通过 OpenAI 兼容 API 获取 embedding。
 
     支持:
-      - OpenAI API: /v1/embeddings (base_url 已含 /v1)
-      - DeepSeek API: 需要 base_url 指向类似 https://api.deepseek.com/v1
-      - 其他兼容 API
-    如果 base_url 不含 /v1,自动拼接。
+      - OpenAI 官方:base_url=https://api.openai.com/v1
+      - 硅基流动:base_url=https://api.siliconflow.cn/v1
+      - 阿里百炼:base_url=https://dashscope.aliyuncs.com/compatible-mode/v1
+      - 自部署 vLLM/Ollama:任意 OpenAI 兼容前缀
+    URL 拼接规则(避免 //v1/v1):
+      - base 以 /v1 结尾 → 直接拼 /embeddings
+      - base 中已含 /v1/ → 直接拼 /embeddings
+      - 其余 → 拼 /v1/embeddings
     """
     dim = _S.embed_dim or 1024
     client = _get_embed_client()
-    
-    # 确定 embedding URL: 避免 /v1/v1/embeddings 重复
+
     base = _EMBED_BASE_URL.rstrip("/")
-    if base.endswith("/v1"):
-        url = f"{base}/embeddings"
+    if not base:
+        # 未配置 base_url,降级到零向量(避免抛错)
+        return [[0.0] * dim for _ in texts]
+    if base.endswith("/v1") or "/v1/" in base:
+        url = f"{base}/embeddings" if base.endswith("/v1") else f"{base.rstrip('/')}/embeddings"
     else:
-        url = f"{base}/v1/embeddings" if "/v1/" not in base else f"{base}/embeddings"
-    
+        url = f"{base}/v1/embeddings"
+
     try:
         resp = await client.post(
             url,
@@ -71,7 +79,14 @@ async def _embed_openai(texts: list[str]) -> list[list[float]]:
         resp.raise_for_status()
         data = resp.json()
         by_index = {d["index"]: d["embedding"] for d in data.get("data", [])}
-        return [by_index.get(i, [0.0] * dim) for i in range(len(texts))]
+        # 维度校验:首次返回的向量维度若与 embed_dim 不一致,记录警告(易踩坑)
+        vecs = [by_index.get(i, [0.0] * dim) for i in range(len(texts))]
+        if vecs and len(vecs[0]) != dim:
+            print(f"[embed] WARNING: model {_EMBED_MODEL} returns dim={len(vecs[0])} "
+                  f"but schema expects {dim}; vector search will be incorrect. "
+                  f"请换 1024 维模型(如 BAAI/bge-m3)或同步修改 schema.sql + embed_dim。",
+                  flush=True)
+        return vecs
     except Exception as e:
         print(f"[embed] API call failed, fallback to zero vectors: {e}", flush=True)
         return [[0.0] * dim for _ in texts]

@@ -8,6 +8,7 @@ import asyncio
 
 from app.core.config import get_settings
 from app.core.tenant import TenantContext
+from app.core.schema_layer import SchemaStore, TenantSchema
 from app.db.store import Store
 from app.models.schema import DocStatus, CompileDepth, Fact, Entity
 from app.compile.dag import CompileBus
@@ -26,9 +27,20 @@ _S = get_settings()
 async def compile_document_inline(
     store: Store, bus: CompileBus, ctx: TenantContext,
     document_id: str, markdown: str, depth: CompileDepth = CompileDepth.D1,
-    manifest: Manifest | None = None,
+    manifest: Manifest | None = None, schema: TenantSchema | None = None,
 ) -> dict:
+    """编译入口。
+    schema: 可选;不传则按 tenant_id 自动从 SchemaStore 加载(失败回退默认)。
+    """
     tenant_id = ctx.tenant_id
+    # ---- 加载 schema(BUG-1 修复):D2 路径与 L2/L3 都需要,顶部一次取定 ----
+    if schema is None:
+        try:
+            schema_store = await SchemaStore.connect()
+            schema = await schema_store.get(tenant_id)
+        except Exception as e:
+            print(f"[compile] load schema failed (fallback to default): {e}", flush=True)
+            schema = TenantSchema(tenant_id=tenant_id)
     await store.ensure_tenant_partition(tenant_id)
     await store.set_doc_status(tenant_id, document_id, DocStatus.PARSING.value)
 
@@ -58,7 +70,7 @@ async def compile_document_inline(
     # tier-0 摘要质量:对变化 chunk 生成语义摘要(覆盖启发式),并回写
     if changed:
         from app.compile.workers.summarize import generate_summaries
-        await generate_summaries(tenant_id, changed)
+        await generate_summaries(tenant_id, changed, max_chars=schema.summary_max_chars)
         await store.upsert_chunks(tenant_id, changed)
     if depth == CompileDepth.D0:
         return {"chunks": len(chunks), "spans": len(spans), "depth": "D0"}
@@ -79,7 +91,7 @@ async def compile_document_inline(
         if _use_batch:
             from app.compile.workers.l2_extract import batch_extract_document
             chunks_spans = [(c.chunk_id, c.content, span_by_chunk[c.chunk_id]) for c in changed]
-            batch_out = await batch_extract_document(tenant_id, document_id, chunks_spans)
+            batch_out = await batch_extract_document(tenant_id, document_id, chunks_spans, schema=schema)
             for c in changed:
                 facts, ents = batch_out.get(c.chunk_id, ([], []))
                 all_facts.extend(facts); all_entities.extend(ents)
@@ -94,7 +106,7 @@ async def compile_document_inline(
                         return await asyncio.wait_for(
                             extract_chunk(
                                 tenant_id, document_id, chunk.content, span_by_chunk[chunk.chunk_id],
-                                priority=Priority.COMPILE_REALTIME),
+                                priority=Priority.COMPILE_REALTIME, schema=schema),
                             timeout=120.0,  # 单 chunk 超时 120s
                         )
                     except asyncio.TimeoutError:

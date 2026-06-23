@@ -33,11 +33,14 @@ def _extract_json(text: str) -> dict:
         return json.loads(m.group(0)) if m else {"facts": [], "entities": []}
 
 
-def _build_extract_messages(chunk_text: str, spans: list[Span]) -> tuple[list[dict], str]:
-    """构造 fact/entity 抽取的 system blocks 与 user 文本(供实时与 Batch 共用)。"""
+def _build_extract_messages(
+    chunk_text: str, spans: list[Span], system_text: str = EXTRACT_SYSTEM,
+) -> tuple[list[dict], str]:
+    """构造 fact/entity 抽取的 system blocks 与 user 文本(供实时与 Batch 共用)。
+    system_text 可由调用方注入 schema 感知版本。"""
     span_block = "\n".join(f"[{i}] {s.content}" for i, s in enumerate(spans))
     sys_blocks = [
-        {"type": "text", "text": EXTRACT_SYSTEM},
+        {"type": "text", "text": system_text},
         {"type": "text", "text": chunk_text, "cache_control": {"type": "ephemeral"}},
     ]
     user = f"spans:\n{span_block}\n\n请抽取 facts 与 entities。"
