@@ -24,6 +24,9 @@ _auth: AuthStore | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _memory, _auth
+    # 启动期安全闸门:生产环境不允许带默认密钥上线
+    from app.core.security_guard import enforce_production_secrets
+    enforce_production_secrets(required_keys=("JWT_SECRET", "INTERNAL_HMAC_SECRET"))
     store = await Store.connect()
     _auth = AuthStore(store.pool)
     _memory = await MemoryStore.connect(auth_store=_auth)
@@ -32,6 +35,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LLM-Wiki Query Gateway", lifespan=lifespan)
+
+# 可观测性:结构化日志 + /metrics
+from app.core.observability import setup_logging, install_metrics_route  # noqa: E402
+setup_logging("query-gateway")
+install_metrics_route(app)
 
 app.add_middleware(
     CORSMiddleware,

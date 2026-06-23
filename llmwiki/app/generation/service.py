@@ -22,7 +22,15 @@ from app.generation import render as render_mod
 
 OUTPUT_DIR = os.getenv("GENERATION_OUTPUT_DIR", "/tmp/llmwiki-generated")
 
+# 启动期安全闸门:生产环境不允许带默认密钥上线
+from app.core.security_guard import enforce_production_secrets  # noqa: E402
+enforce_production_secrets(required_keys=("JWT_SECRET", "INTERNAL_HMAC_SECRET"))
+
 app = FastAPI(title="LLM-Wiki Generation")
+
+from app.core.observability import setup_logging, install_metrics_route  # noqa: E402
+setup_logging("generation")
+install_metrics_route(app)
 
 app.add_middleware(
     CORSMiddleware,

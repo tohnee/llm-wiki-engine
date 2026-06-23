@@ -29,12 +29,21 @@ _auth: AuthStore | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _store, _auth
+    from app.core.security_guard import enforce_production_secrets
+    enforce_production_secrets(
+        required_keys=("JWT_SECRET",),
+        extra_required=("PLATFORM_ADMIN_KEY",),
+    )
     _store = await Store.connect()
     _auth = AuthStore(_store.pool)
     yield
 
 
 app = FastAPI(title="LLM-Wiki Admin/Auth", lifespan=lifespan)
+
+from app.core.observability import setup_logging, install_metrics_route  # noqa: E402
+setup_logging("admin")
+install_metrics_route(app)
 
 app.add_middleware(
     CORSMiddleware,

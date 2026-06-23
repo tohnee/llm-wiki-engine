@@ -28,6 +28,8 @@ _auth: AuthStore | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _store, _bus, _auth
+    from app.core.security_guard import enforce_production_secrets
+    enforce_production_secrets(required_keys=("JWT_SECRET", "INTERNAL_HMAC_SECRET"))
     _store = await Store.connect()
     _bus = await CompileBus.connect()
     _auth = AuthStore(_store.pool)
@@ -35,6 +37,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LLM-Wiki Ingest", lifespan=lifespan)
+
+from app.core.observability import setup_logging, install_metrics_route  # noqa: E402
+setup_logging("ingest")
+install_metrics_route(app)
 
 app.add_middleware(
     CORSMiddleware,

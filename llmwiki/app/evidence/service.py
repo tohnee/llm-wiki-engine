@@ -30,12 +30,18 @@ _retriever: Retriever | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _store, _retriever
+    from app.core.security_guard import enforce_production_secrets
+    enforce_production_secrets(required_keys=("INTERNAL_HMAC_SECRET",))
     _store = await Store.connect()
     _retriever = Retriever(_store)
     yield
 
 
 app = FastAPI(title="LLM-Wiki Evidence Service", lifespan=lifespan)
+
+from app.core.observability import setup_logging, install_metrics_route  # noqa: E402
+setup_logging("evidence")
+install_metrics_route(app)
 
 app.add_middleware(
     CORSMiddleware,
