@@ -184,14 +184,18 @@ async def compile_document_inline(
                     entity_ids=chunk_entities.get(c.chunk_id, [])))
 
         # ---- L4: relation + wiki render(仅 D2) ----
-        if depth == CompileDepth.D2 and persist_entities:
+        # 用 all_entities 而非 persist_entities — 后者只含「本次新增」实体,
+        # 复用既有实体的文档将无 L3 关系产出(致使 relations_total 始终 0)。
+        rel_entities = all_entities or persist_entities
+        if depth == CompileDepth.D2 and rel_entities:
             facts_summary = "\n".join(
                 f"{f.subject_entity} {f.predicate} {f.object_value}" for f in all_facts[:200])
-            rels = await extract_relations(tenant_id, persist_entities, facts_summary, schema=schema)
+            rels = await extract_relations(tenant_id, rel_entities, facts_summary, schema=schema)
+            print(f"[compile] L3 extract_relations → {len(rels)} relations (entities={len(rel_entities)})", flush=True)
             if rels:
                 await store.upsert_relations(tenant_id, rels)
             nodes = []
-            for e in persist_entities[:50]:
+            for e in rel_entities[:50]:
                 ef = [f for f in all_facts if f.subject_entity == e.entity_id]
                 er = [r for r in rels if e.entity_id in (r.source_entity, r.target_entity)]
                 nodes.append(await render_wiki_node(tenant_id, e, ef, er))

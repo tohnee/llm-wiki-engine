@@ -71,7 +71,8 @@ async def _embed_openai(texts: list[str]) -> list[list[float]]:
         url = f"{base}/v1/embeddings"
 
     # 分批 + 重试,避免单次 input 过多触发 400/429
-    BATCH = 16
+    # 火山方舟 doubao-embedding-vision 单次 input 限制较严(实测 16 仍 400),用 4 保守
+    BATCH = 4
     out: list[list[float]] = []
     for start in range(0, len(texts), BATCH):
         batch = texts[start:start + BATCH]
@@ -174,8 +175,8 @@ def embed_sync(texts: list[str]) -> list[list[float]]:
             url = f"{base}/embeddings"
         else:
             url = f"{base}/v1/embeddings"
-        # 分批 + 重试: 同步版本
-        BATCH = 16
+        # 分批 + 重试: 同步版本(火山方舟限制,batch=4)
+        BATCH = 4
         out: list[list[float]] = []
         with httpx.Client(timeout=30.0) as c:
             for start in range(0, len(texts), BATCH):

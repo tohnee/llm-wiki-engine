@@ -29,8 +29,21 @@ def _extract_json(text: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        # fallback 1: 取首尾 {} 之间的最大子串
         m = re.search(r"\{.*\}", text, re.S)
-        return json.loads(m.group(0)) if m else {"facts": [], "entities": []}
+        if m:
+            inner = m.group(0)
+            try:
+                return json.loads(inner)
+            except json.JSONDecodeError:
+                # fallback 2: 清理常见 LLM JSON 错误(尾随逗号 / 换行字面值 / 单引号)
+                cleaned = re.sub(r",\s*([}\]])", r"\1", inner)   # 去尾随逗号
+                cleaned = cleaned.replace("\n", " ").replace("\r", " ")
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError as e:
+                    print(f"[l2_extract] JSON parse failed even after cleanup: {e}", flush=True)
+        return {"facts": [], "entities": []}
 
 
 def _build_extract_messages(
