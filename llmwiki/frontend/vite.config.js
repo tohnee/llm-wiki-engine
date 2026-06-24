@@ -17,4 +17,10 @@ export default defineConfig({
       "/api/evidence": { target: "http://localhost:8001", rewrite: (p) => p.replace(/^\/api\/evidence/, "") },
     },
   },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.js"],
+    include: ["src/**/*.{test,spec}.{js,jsx}"],
+  },
 });

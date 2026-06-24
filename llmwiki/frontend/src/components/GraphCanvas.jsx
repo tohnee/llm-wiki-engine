@@ -1,101 +1,250 @@
-import React, { useRef, useEffect, useState } from "react";
-import ForceGraph3D from "react-force-graph-3d";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 
-/** 节点颜色映射 (与 Graph 视图 TYPE_META 保持一致) */
+/**
+ * GraphCanvas2D — 轻量 2D 力导向图(纯 Canvas,无外部依赖)
+ *
+ * 替代 react-force-graph-3d,彻底消除 tick 崩溃。
+ * 自包含 force simulation: Verlet 积分 + 斥力 + 弹簧 + 中心引力。
+ */
+
 const TYPE_COLORS = {
-  project: "#CC785C",
-  product: "#CC785C",
-  person:  "#10A37F",
-  org:     "#2563EB",
-  concept: "#8B5CF6",
-  event:   "#EC4899",
-  default: "#A78BFA",
+  project: "#CC785C", product: "#CC785C", person: "#10A37F",
+  org: "#2563EB", concept: "#8B5CF6", event: "#EC4899", default: "#A78BFA",
 };
-function nodeColor(n) { return TYPE_COLORS[n.type] || TYPE_COLORS.default; }
 
 export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover, width, height }) {
-  const fgRef = useRef();
-  const containerRef = useRef();
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const stateRef = useRef({ positions: new Map(), velocities: new Map(), raf: null, hovered: null });
   const [measuredWidth, setMeasuredWidth] = useState(width || 800);
-
-  // 自动测量容器宽度(解决 width=undefined 导致 tick 崩溃)
-  useEffect(() => {
-    if (width) { setMeasuredWidth(width); return; }
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect?.width;
-      if (w && w > 0) setMeasuredWidth(Math.floor(w));
-    });
-    ro.observe(el);
-    // 初始值
-    setMeasuredWidth(el.clientWidth || 800);
-    return () => ro.disconnect();
-  }, [width]);
+  const [ready, setReady] = useState(false);
 
   const h = height || 500;
   const w = measuredWidth;
 
-  // 节点 size 按度数缩放
-  const nodeSize = (n) => Math.max(4, Math.min(12, 4 + Math.sqrt(n.degree || 0) * 1.5));
-
-  const gData = {
-    nodes: nodes.map((n) => ({ ...n, id: n.entity_id, val: nodeSize(n) })),
-    links: edges.map((e) => ({ source: e.source, target: e.target, relation: e.relation })),
-  };
-
-  // 调整物理布局参数
+  // 测量容器宽度
   useEffect(() => {
-    if (!fgRef.current) return;
-    const fg = fgRef.current;
-    try {
-      const chargeForce = fg.d3Force("charge");
-      if (chargeForce) chargeForce.strength(-80);
-      const linkForce = fg.d3Force("link");
-      if (linkForce) linkForce.distance(50);
-      fg.d3ReheatSimulation();
-    } catch {}
-  }, [nodes, edges]);
+    if (width) { setMeasuredWidth(width); setReady(true); return; }
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      const cw = el.clientWidth;
+      if (cw > 0) { setMeasuredWidth(cw); setReady(true); }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [width]);
 
-  // 数据为空时不渲染 ForceGraph3D(避免 tick 崩溃)
-  if (!gData.nodes.length) {
+  // 数据清洗
+  const nodeIdSet = new Set(nodes.map((n) => n.entity_id || n.id));
+  const cleanNodes = nodes.filter((n) => (n.entity_id || n.id));
+  const cleanEdges = (edges || []).filter(
+    (e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)
+  );
+
+  // 初始化节点位置(圆形分布)
+  useEffect(() => {
+    const st = stateRef.current;
+    const cx = w / 2, cy = h / 2;
+    const r = Math.min(w, h) * 0.35;
+    cleanNodes.forEach((n, i) => {
+      const id = n.entity_id || n.id;
+      if (!st.positions.has(id)) {
+        const angle = (i / cleanNodes.length) * Math.PI * 2;
+        st.positions.set(id, {
+          x: cx + Math.cos(angle) * r + (Math.random() - 0.5) * 20,
+          y: cy + Math.sin(angle) * r + (Math.random() - 0.5) * 20,
+        });
+        st.velocities.set(id, { x: 0, y: 0 });
+      }
+    });
+    // 清除已不存在的节点
+    const validIds = new Set(cleanNodes.map((n) => n.entity_id || n.id));
+    for (const id of st.positions.keys()) {
+      if (!validIds.has(id)) { st.positions.delete(id); st.velocities.delete(id); }
+    }
+  }, [cleanNodes, w, h]);
+
+  // 力导向动画
+  useEffect(() => {
+    if (!ready || !cleanNodes.length) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const st = stateRef.current;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+
+    const cx = w / 2, cy = h / 2;
+    const REPULSION = 800;
+    const SPRING = 0.02;
+    const SPRING_LEN = 80;
+    const CENTER = 0.005;
+    const DAMPING = 0.85;
+    const MAX_VEL = 10;
+
+    let running = true;
+    const pos = st.positions;
+    const vel = st.velocities;
+
+    function tick() {
+      if (!running) return;
+
+      // 斥力(O(n²) 但 452 节点可接受)
+      const ids = cleanNodes.map((n) => n.entity_id || n.id);
+      for (let i = 0; i < ids.length; i++) {
+        const a = pos.get(ids[i]); if (!a) continue;
+        let fx = 0, fy = 0;
+        for (let j = 0; j < ids.length; j++) {
+          if (i === j) continue;
+          const b = pos.get(ids[j]); if (!b) continue;
+          let dx = a.x - b.x, dy = a.y - b.y;
+          let dist2 = dx * dx + dy * dy + 0.01;
+          let force = REPULSION / dist2;
+          let dist = Math.sqrt(dist2);
+          fx += (dx / dist) * force;
+          fy += (dy / dist) * force;
+        }
+        // 中心引力
+        fx += (cx - a.x) * CENTER;
+        fy += (cy - a.y) * CENTER;
+        // 弹簧(边)
+        for (const e of cleanEdges) {
+          let other = null;
+          if (e.source === ids[i]) other = e.target;
+          else if (e.target === ids[i]) other = e.source;
+          if (!other) continue;
+          const b = pos.get(other); if (!b) continue;
+          let dx = b.x - a.x, dy = b.y - a.y;
+          let dist = Math.sqrt(dx * dx + dy * dy) + 0.01;
+          let force = (dist - SPRING_LEN) * SPRING;
+          fx += (dx / dist) * force;
+          fy += (dy / dist) * force;
+        }
+        const v = vel.get(ids[i]) || { x: 0, y: 0 };
+        v.x = (v.x + fx) * DAMPING;
+        v.y = (v.y + fy) * DAMPING;
+        if (v.x > MAX_VEL) v.x = MAX_VEL;
+        if (v.x < -MAX_VEL) v.x = -MAX_VEL;
+        if (v.y > MAX_VEL) v.y = MAX_VEL;
+        if (v.y < -MAX_VEL) v.y = -MAX_VEL;
+      }
+      // 应用速度
+      for (const id of ids) {
+        const p = pos.get(id); const v = vel.get(id); if (!p || !v) continue;
+        p.x += v.x; p.y += v.y;
+        // 边界
+        p.x = Math.max(20, Math.min(w - 20, p.x));
+        p.y = Math.max(20, Math.min(h - 20, p.y));
+      }
+      draw();
+      st.raf = requestAnimationFrame(tick);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, w, h);
+      // 画边
+      ctx.strokeStyle = "rgba(31,30,29,0.15)";
+      ctx.lineWidth = 1;
+      for (const e of cleanEdges) {
+        const a = pos.get(e.source); const b = pos.get(e.target);
+        if (!a || !b) continue;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      // 画节点
+      for (const n of cleanNodes) {
+        const id = n.entity_id || n.id;
+        const p = pos.get(id); if (!p) continue;
+        const color = TYPE_COLORS[n.type] || TYPE_COLORS.default;
+        const deg = n.degree || 0;
+        const radius = Math.max(3, Math.min(8, 3 + Math.sqrt(deg) * 1.2));
+        const isHovered = st.hovered === id;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        if (isHovered) {
+          ctx.strokeStyle = "#1F1E1D";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        // 名称(仅 hover 或高度数时)
+        if (isHovered || deg >= 3) {
+          ctx.fillStyle = "#1F1E1D";
+          ctx.font = "11px Inter, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(n.name || id.slice(0, 10), p.x, p.y - radius - 4);
+        }
+      }
+    }
+
+    tick();
+    return () => {
+      running = false;
+      if (st.raf) cancelAnimationFrame(st.raf);
+    };
+  }, [ready, cleanNodes, cleanEdges, w, h]);
+
+  // 鼠标交互
+  const handleMouseMove = useCallback((ev) => {
+    const canvas = canvasRef.current; if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = ev.clientX - rect.left;
+    const my = ev.clientY - rect.top;
+    const st = stateRef.current;
+    let found = null;
+    for (const n of cleanNodes) {
+      const id = n.entity_id || n.id;
+      const p = st.positions.get(id); if (!p) continue;
+      const dx = p.x - mx, dy = p.y - my;
+      const r = Math.max(3, Math.min(8, 3 + Math.sqrt(n.degree || 0) * 1.2)) + 4;
+      if (dx * dx + dy * dy < r * r) { found = n; break; }
+    }
+    st.hovered = found ? (found.entity_id || found.id) : null;
+    canvas.style.cursor = found ? "pointer" : "default";
+    if (onHover) onHover(found, ev);
+  }, [cleanNodes, onHover]);
+
+  const handleClick = useCallback((ev) => {
+    const canvas = canvasRef.current; if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = ev.clientX - rect.left;
+    const my = ev.clientY - rect.top;
+    const st = stateRef.current;
+    for (const n of cleanNodes) {
+      const id = n.entity_id || n.id;
+      const p = st.positions.get(id); if (!p) continue;
+      const dx = p.x - mx, dy = p.y - my;
+      const r = Math.max(3, Math.min(8, 3 + Math.sqrt(n.degree || 0) * 1.2)) + 4;
+      if (dx * dx + dy * dy < r * r) { onSelect?.(n); break; }
+    }
+  }, [cleanNodes, onSelect]);
+
+  if (!cleanNodes.length) {
     return (
-      <div ref={containerRef} style={{ width: "100%", height: h, display: "grid", placeItems: "center", color: "var(--ink-3)" }}>
+      <div ref={containerRef} style={{
+        width: "100%", height: h, display: "grid", placeItems: "center",
+        color: "var(--ink-3)", fontSize: 13.5,
+        background: "var(--surface)", border: "1px solid var(--line)", borderRadius: "var(--r-lg)",
+      }}>
         图谱中无可见节点。尝试调整过滤条件或入库更多文档。
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} style={{ width: "100%", height: h }}>
-      <ForceGraph3D
-        ref={fgRef}
-        graphData={gData}
-        width={w}
-        height={h}
-        backgroundColor="#FFFFFF"
-        nodeColor={nodeColor}
-        nodeVal={(n) => n.val || 4}
-        nodeLabel={(n) => `${n.name} (${n.type}) · 度 ${n.degree || 0}`}
-        linkLabel={(l) => l.relation || ""}
-        linkColor={() => "rgba(31, 30, 29, 0.22)"}
-        linkWidth={0.8}
-        linkOpacity={0.5}
-        nodeRelSize={5}
-        linkDirectionalParticles={1}
-        linkDirectionalParticleSpeed={0.005}
-        linkDirectionalParticleColor={() => "rgba(204, 120, 92, 0.7)"}
-        cooldownTicks={120}
-        enableNodeDrag={true}
-        onNodeClick={(n) => onSelect && onSelect(n)}
-        onNodeHover={(n) => {
-          if (!onHover) return;
-          const ev = (typeof window !== "undefined" && window.event) ? window.event : null;
-          onHover(n, ev);
-          if (typeof document !== "undefined") {
-            document.body.style.cursor = n ? "pointer" : "default";
-          }
-        }}
+    <div ref={containerRef} style={{ width: "100%", height: h, position: "relative" }}>
+      <canvas
+        ref={canvasRef}
+        style={{ width: "100%", height: "100%", display: "block", borderRadius: "var(--r-lg)" }}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => { stateRef.current.hovered = null; onHover?.(null); }}
+        onClick={handleClick}
       />
     </div>
   );

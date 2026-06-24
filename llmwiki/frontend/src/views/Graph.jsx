@@ -1,16 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../api.js";
 import GraphCanvas from "../components/GraphCanvas.jsx";
-
-/** 节点类型 → 中文标签 + 颜色(与设计系统 --node-* 对齐) */
-const TYPE_META = {
-  project: { label: "项目", color: "#CC785C" },
-  product: { label: "产品", color: "#CC785C" },
-  person:  { label: "人员", color: "#10A37F" },
-  org:     { label: "组织", color: "#2563EB" },
-  concept: { label: "概念", color: "#8B5CF6" },
-  event:   { label: "事件", color: "#EC4899" },
-};
+import {
+  TYPE_META, parseGraphResponse, filterNodes, filterEdges, neighborsOf, countByType,
+} from "../lib/graph-utils.js";
 
 function IconSearch() {
   return (
@@ -37,74 +30,23 @@ export default function Graph() {
 
   useEffect(() => {
     api.graph("json").then((r) => {
-      const g = typeof r.data === "string" ? JSON.parse(r.data) : r;
-      const gd = (g && g.nodes) ? g : (g && g.data ? g.data : { nodes: [], edges: [] });
-      const edges = (gd.edges || []).map((e) => ({
-        source: e.source, target: e.target,
-        relation: e.relation_type || e.relation || "",
-      }));
-      // 计算每个节点的真实度数(忽略后端给的 degree,自己算)
-      const degMap = {};
-      edges.forEach((e) => {
-        degMap[e.source] = (degMap[e.source] || 0) + 1;
-        degMap[e.target] = (degMap[e.target] || 0) + 1;
-      });
-      const nodes = (gd.nodes || []).map((n) => {
-        const id = n.id || n.entity_id;
-        return {
-          entity_id: id,
-          name: n.name,
-          type: n.type,
-          degree: degMap[id] || 0,
-        };
-      });
-      setGraph({ nodes, edges });
+      setGraph(parseGraphResponse(r));
       setLive(true); setApiError(null);
     }).catch((e) => {
       setApiError(e.message || String(e));
     });
   }, []);
 
-  // ───── 多重过滤 ─────
-  const filteredNodes = (() => {
-    let ns = graph.nodes;
-    if (hideIsolated) ns = ns.filter((n) => (n.degree || 0) > 0);
-    if (minDegree > 0) ns = ns.filter((n) => (n.degree || 0) >= minDegree);
-    if (typeFilter) ns = ns.filter((n) => n.type === typeFilter);
-    if (searchTerm.trim()) {
-      const t = searchTerm.toLowerCase();
-      ns = ns.filter((n) => n.name?.toLowerCase().includes(t));
-    }
-    // 按度数倒序,取 top N
-    ns = [...ns].sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, topN);
-    return ns;
-  })();
-
-  // 只保留与 filteredNodes 都相关的边
-  const filteredNodeIds = new Set(filteredNodes.map((n) => n.entity_id));
-  const filteredEdges = graph.edges.filter(
-    (e) => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
-  );
-
+  // ───── 多重过滤(用已测试的纯函数) ─────
+  const filteredNodes = filterNodes(graph.nodes, { hideIsolated, minDegree, typeFilter, searchTerm, topN });
+  const filteredEdges = filterEdges(graph.edges, filteredNodes);
   const isolatedCount = graph.nodes.filter((n) => (n.degree || 0) === 0).length;
 
-  const selEdges = sel
-    ? graph.edges.filter((e) => e.source === sel.entity_id || e.target === sel.entity_id)
-    : [];
-  const selNeighbors = sel
-    ? selEdges.map((e) => {
-        const otherId = e.source === sel.entity_id ? e.target : e.source;
-        const other = graph.nodes.find((n) => n.entity_id === otherId);
-        return { edge: e, node: other || { entity_id: otherId, name: otherId.slice(0, 12), type: "?" } };
-      })
-    : [];
+  const selNeighbors = neighborsOf(sel, graph.nodes, graph.edges);
 
-  // 统计每个 type 的节点数(用于 legend)
-  const typeCounts = filteredNodes.reduce((m, n) => {
-    m[n.type] = (m[n.type] || 0) + 1; return m;
-  }, {});
+  // 统计各类型节点数
+  const typeCounts = countByType(filteredNodes);
   const presentTypes = Object.keys(typeCounts).sort();
-  // 全量类型(用于过滤按钮)
   const presentTypesAll = Array.from(new Set(graph.nodes.map((n) => n.type).filter(Boolean))).sort();
 
   return (

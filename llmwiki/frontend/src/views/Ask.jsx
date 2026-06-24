@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { api } from "../api.js";
-import { renderWithCitations } from "../components/Citation.jsx";
+import { Citation } from "../components/Citation.jsx";
+import { parseMarkdown, parseInline, extractCitations } from "../lib/markdown-parser.js";
 import { MOCK_HISTORY } from "../mock-history.js";
 
 const SUGGESTIONS = [
@@ -19,104 +20,76 @@ function SendIcon() {
   );
 }
 
-/* ─── 极简 Markdown 渲染(代码块 / 表格 / 列表 / 引用 / 标题 / **bold** / `code` / [cite]) ─── */
+/* ─── 渲染层(薄): 把 parser 输出的数据结构转成 React 元素 ─── */
+// 内联: 先按 citation 切分,再对每段做 bold/code
 function renderInline(text) {
   if (text == null || text === "") return null;
-  const segs = renderWithCitations(text); // 先处理 [doc:span] citation
-  if (!Array.isArray(segs)) return <>{segs}</>;
-  return segs.map((seg, i) => {
-    if (typeof seg !== "string") return <React.Fragment key={i}>{seg}</React.Fragment>;
-    const out = [];
-    let rest = seg, k = 0;
-    while (rest.length) {
-      const mB = /^\*\*([^*]+)\*\*/.exec(rest);
-      const mC = /^`([^`]+)`/.exec(rest);
-      if (mB) { out.push(<strong key={`${i}-${k++}`}>{mB[1]}</strong>); rest = rest.slice(mB[0].length); continue; }
-      if (mC) { out.push(<code key={`${i}-${k++}`} className="md-inline-code">{mC[1]}</code>); rest = rest.slice(mC[0].length); continue; }
-      const next = rest.search(/\*\*|`/);
-      if (next === -1) { out.push(rest); break; }
-      out.push(rest.slice(0, next)); rest = rest.slice(next);
-    }
-    return <React.Fragment key={i}>{out}</React.Fragment>;
+  const cites = extractCitations(text);
+  if (cites.length === 0) return renderTokens(text);
+
+  // 按 citation raw 切分文本,citation 处插入 <Citation>
+  const parts = [];
+  let rest = text, key = 0;
+  for (const c of cites) {
+    const idx = rest.indexOf(c.raw);
+    if (idx > 0) parts.push(<React.Fragment key={key++}>{renderTokens(rest.slice(0, idx))}</React.Fragment>);
+    parts.push(<Citation key={key++} docId={c.docId} spanId={c.spanId} />);
+    rest = rest.slice(idx + c.raw.length);
+  }
+  if (rest) parts.push(<React.Fragment key={key++}>{renderTokens(rest)}</React.Fragment>);
+  return parts;
+}
+
+// 把 bold/code/text token 转成元素
+function renderTokens(text) {
+  return parseInline(text).map((tok, i) => {
+    if (tok.type === "bold") return <strong key={i}>{tok.value}</strong>;
+    if (tok.type === "code") return <code key={i} className="md-inline-code">{tok.value}</code>;
+    return <React.Fragment key={i}>{tok.value}</React.Fragment>;
   });
 }
 
+// 把 parseMarkdown 输出的 block 数组转成 React 元素
 function renderMarkdown(text) {
-  if (!text) return null;
-  const lines = text.split("\n");
-  const blocks = []; let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    // 代码块
-    if (line.trim().startsWith("```")) {
-      const lang = line.trim().slice(3).trim();
-      const buf = []; i++;
-      while (i < lines.length && !lines[i].trim().startsWith("```")) { buf.push(lines[i]); i++; }
-      i++;
-      blocks.push(
-        <pre key={blocks.length} className="md-code">
-          {lang && <div className="md-code-lang">{lang}</div>}
-          <code>{buf.join("\n")}</code>
-        </pre>);
-      continue;
-    }
-    // 表格
-    if (line.trim().startsWith("|") && lines[i + 1]?.trim().match(/^\|[\s:|-]+\|$/)) {
-      const headers = line.split("|").slice(1, -1).map(s => s.trim());
-      const rows = []; i += 2;
-      while (i < lines.length && lines[i].trim().startsWith("|")) {
-        rows.push(lines[i].split("|").slice(1, -1).map(s => s.trim())); i++;
-      }
-      blocks.push(
-        <div key={blocks.length} className="md-table-wrap">
-          <table className="md-table">
-            <thead><tr>{headers.map((h, k) => <th key={k}>{renderInline(h)}</th>)}</tr></thead>
-            <tbody>{rows.map((r, ri) => (
-              <tr key={ri}>{r.map((c, ci) => <td key={ci}>{renderInline(c)}</td>)}</tr>
-            ))}</tbody>
-          </table>
-        </div>);
-      continue;
-    }
-    // 标题
-    const h = /^(#{1,3})\s+(.+)/.exec(line);
-    if (h) {
-      const Tag = `h${h[1].length + 2}`;
-      blocks.push(<Tag key={blocks.length} className="md-h">{renderInline(h[2])}</Tag>);
-      i++; continue;
-    }
-    // 引用
-    if (line.startsWith("> ")) {
-      const buf = [];
-      while (i < lines.length && lines[i].startsWith("> ")) { buf.push(lines[i].slice(2)); i++; }
-      blocks.push(<blockquote key={blocks.length} className="md-quote">{renderInline(buf.join(" "))}</blockquote>);
-      continue;
-    }
-    // 列表
-    if (/^\s*[-*]\s+/.test(line)) {
-      const items = [];
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*]\s+/, "")); i++; }
-      blocks.push(<ul key={blocks.length} className="md-ul">{items.map((t, k) => <li key={k}>{renderInline(t)}</li>)}</ul>);
-      continue;
-    }
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const items = [];
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+\.\s+/, "")); i++; }
-      blocks.push(<ol key={blocks.length} className="md-ol">{items.map((t, k) => <li key={k}>{renderInline(t)}</li>)}</ol>);
-      continue;
-    }
-    // 段落
-    if (line.trim()) {
-      const buf = [line]; i++;
-      while (i < lines.length && lines[i].trim() && !/^(#|>|\s*[-*]\s|\s*\d+\.\s|```|\|)/.test(lines[i])) {
-        buf.push(lines[i]); i++;
-      }
-      blocks.push(<p key={blocks.length} className="md-p">{renderInline(buf.join(" "))}</p>);
-      continue;
-    }
-    i++;
-  }
-  return <>{blocks}</>;
+  const blocks = parseMarkdown(text);
+  return (
+    <>
+      {blocks.map((b, i) => {
+        switch (b.type) {
+          case "code":
+            return (
+              <pre key={i} className="md-code">
+                {b.lang && <div className="md-code-lang">{b.lang}</div>}
+                <code>{b.content}</code>
+              </pre>
+            );
+          case "table":
+            return (
+              <div key={i} className="md-table-wrap">
+                <table className="md-table">
+                  <thead><tr>{b.headers.map((h, k) => <th key={k}>{renderInline(h)}</th>)}</tr></thead>
+                  <tbody>{b.rows.map((r, ri) => (
+                    <tr key={ri}>{r.map((c, ci) => <td key={ci}>{renderInline(c)}</td>)}</tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            );
+          case "h": {
+            const Tag = `h${b.level + 2}`;
+            return <Tag key={i} className="md-h">{renderInline(b.text)}</Tag>;
+          }
+          case "quote":
+            return <blockquote key={i} className="md-quote">{renderInline(b.text)}</blockquote>;
+          case "ul":
+            return <ul key={i} className="md-ul">{b.items.map((t, k) => <li key={k}>{renderInline(t)}</li>)}</ul>;
+          case "ol":
+            return <ol key={i} className="md-ol">{b.items.map((t, k) => <li key={k}>{renderInline(t)}</li>)}</ol>;
+          default:
+            return <p key={i} className="md-p">{renderInline(b.text)}</p>;
+        }
+      })}
+    </>
+  );
 }
 
 export default function Ask() {

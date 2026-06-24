@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { auth, IS_DEMO } from "./api.js";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import Login from "./views/Login.jsx";
 import Documents from "./views/Documents.jsx";
 import Graph from "./views/Graph.jsx";
@@ -124,7 +125,11 @@ export default function App() {
           <h1>{active.label}</h1>
           <span className="desc">{active.desc}</span>
         </div>
-        <div className="content"><View /></div>
+        <div className="content">
+          <ErrorBoundary key={view} name={view} resetKey={view}>
+            <View />
+          </ErrorBoundary>
+        </div>
       </main>
     </div>
   );
