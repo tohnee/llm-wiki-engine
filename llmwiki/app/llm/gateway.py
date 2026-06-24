@@ -130,6 +130,7 @@ class LLMGateway:
         messages: Optional[list] = None,
         retries: int = 5,                      # 失败重试次数(含 429 限流)
         timeout_sec: float = 300.0,            # 单次调用超时(秒)
+        response_format: Optional[dict] = None,  # 例:{"type":"json_object"} 强制 JSON
     ) -> Any:
         if not self._bucket(tenant_id).allow():
             await asyncio.sleep(0.5)
@@ -145,7 +146,7 @@ class LLMGateway:
             try:
                 if self.provider == "openai":
                     return await asyncio.wait_for(
-                        self._complete_openai(model, system, cached_prefix, msgs, priority, max_tokens, tools),
+                        self._complete_openai(model, system, cached_prefix, msgs, priority, max_tokens, tools, response_format),
                         timeout=timeout_sec,
                     )
                 return await asyncio.wait_for(
@@ -205,7 +206,7 @@ class LLMGateway:
         return await self._enqueue(priority, _call())
 
     async def _complete_openai(
-        self, model, system, cached_prefix, msgs, priority, max_tokens, tools
+        self, model, system, cached_prefix, msgs, priority, max_tokens, tools, response_format=None,
     ) -> Any:
         """OpenAI 兼容 API 调用。
 
@@ -233,6 +234,9 @@ class LLMGateway:
             self.calls += 1
             kwargs: dict[str, Any] = dict(
                 model=model, max_tokens=max_tokens, messages=oai_msgs)
+            if response_format:
+                # 火山方舟 / OpenAI 兼容 API:强制 JSON 输出
+                kwargs["response_format"] = response_format
             # OpenAI tool calling(格式不同,简化处理:仅在无 tools 时走纯文本)
             resp = await self.client.chat.completions.create(**kwargs)
             return _OAIResponseWrapper(resp)

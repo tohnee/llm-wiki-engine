@@ -25,8 +25,18 @@ def _sim(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
-def _cos(a: list[float], b: list[float]) -> float:
-    va, vb = np.array(a), np.array(b)
+def _cos(a: list[float], b) -> float:
+    """余弦相似度。b 可能是 list[float] 或 pgvector 字符串 "[0.1,0.2,...]"。"""
+    if isinstance(b, str):
+        # pgvector 在 asyncpg 里默认返回 "[v1,v2,...]" 字符串
+        import json as _json
+        try:
+            b = _json.loads(b)
+        except Exception:
+            return 0.0
+    va, vb = np.array(a, dtype=float), np.array(b, dtype=float)
+    if va.shape != vb.shape or va.size == 0:
+        return 0.0
     return float(va @ vb / (np.linalg.norm(va) * np.linalg.norm(vb) + 1e-9))
 
 

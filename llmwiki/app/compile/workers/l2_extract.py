@@ -99,6 +99,12 @@ async def extract_chunk(
     """实时单 chunk 抽取(渐进编译/小文档)。大文档走 batch_extract_document。
     schema: 可选 TenantSchema,提供则用其 entity_types/custom_rules 构建系统 prompt。"""
     system_text = build_extract_system(schema.entity_types, schema.custom_rules) if schema else EXTRACT_SYSTEM
+    # 强化:明确要求严格 JSON,避免 LLM 返回 markdown 围栏 / 解释文字
+    system_text = (
+        system_text
+        + "\n\n[严格输出要求] 只输出一个 JSON 对象,无任何解释、无 markdown 围栏。"
+        "字段必须为 {\"facts\":[...],\"entities\":[...]};末尾不能有逗号;字符串使用双引号。"
+    )
     gw = get_gateway()
     span_block = "\n".join(f"[{i}] {s.content}" for i, s in enumerate(spans))
     resp = await gw.complete(
@@ -106,6 +112,10 @@ async def extract_chunk(
         cached_prefix=chunk_text,
         user_content=f"spans:\n{span_block}\n\n请抽取 facts 与 entities。",
         priority=priority, max_tokens=2048,
+        # 注意: 火山方舟 glm-5.2 不支持 response_format=json_object(返回 400);
+        # kimi-k2.7-code 支持但偶发返回空。当前依靠 [严格输出要求] prompt 与
+        # _extract_json 的多层 fallback 保证可靠性。如确认 LLM 支持,可在调用处加
+        # response_format={"type": "json_object"}。
     )
     text = "".join(b.text for b in resp.content if b.type == "text")
     return parse_extract_result(tenant_id, document_id, chunk_text, spans, text)

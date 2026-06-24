@@ -27,9 +27,13 @@ async def handle(store: Store, bus: CompileBus, manifest: Manifest, msg: Compile
     ctx = TenantContext(tenant_id=msg.tenant_id, user_id="compile", session_id="compile")
     source = msg.payload.get("source_path", "")
     markdown = msg.payload.get("markdown") or await parse_to_markdown(source)
+    # 注意: manifest 当前 key = (tenant, chunk_id),未含 document_id。
+    # 同一 markdown 多次入库会产生相同 chunk_id → manifest 命中"未变化"→ L2 跳过 →
+    # facts/entities/relations 始终为 0。临时禁用 manifest 强制每次全量编译,
+    # 待 manifest key 升级为 (tenant, document_id, chunk_id) 后可恢复增量。
     await compile_document_inline(
         store, bus, ctx, msg.document_id, markdown,
-        CompileDepth(msg.depth), manifest=manifest)
+        CompileDepth(msg.depth), manifest=None)
 
 
 async def main() -> None:

@@ -61,8 +61,11 @@ async def compile_document_inline(
                 continue  # hash 一致,真正未变化,跳过
             changed.append(c)  # 新 chunk(prev=None)或 hash 变化,需编译
     else:
-        existing = await store.existing_chunk_hashes(tenant_id, document_id)
-        changed = [c for c in chunks if existing.get(c.chunk_id) != c.content_hash]
+        # 注意: existing_chunk_hashes 在新文档入库时会返回空(正确),
+        # 但同一 markdown 重复入库时 chunk_id 基于 content hash,
+        # 可能在 chunks 表已有记录(跨 document_id)。
+        # 为确保 L2 总是执行,对非 manifest 路径强制全量编译。
+        changed = chunks
 
     await store.upsert_chunks(tenant_id, chunks)
     await store.upsert_spans(tenant_id, spans)
