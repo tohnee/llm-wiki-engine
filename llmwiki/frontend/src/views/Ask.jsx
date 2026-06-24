@@ -21,8 +21,9 @@ function SendIcon() {
 
 /* ─── 极简 Markdown 渲染(代码块 / 表格 / 列表 / 引用 / 标题 / **bold** / `code` / [cite]) ─── */
 function renderInline(text) {
-  if (text == null) return null;
+  if (text == null || text === "") return null;
   const segs = renderWithCitations(text); // 先处理 [doc:span] citation
+  if (!Array.isArray(segs)) return <>{segs}</>;
   return segs.map((seg, i) => {
     if (typeof seg !== "string") return <React.Fragment key={i}>{seg}</React.Fragment>;
     const out = [];

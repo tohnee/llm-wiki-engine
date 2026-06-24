@@ -169,7 +169,8 @@ export default function Generate() {
                   </div>
                 )}
 
-                {result.format === "markdown" && (
+                {/* Markdown 报告 */}
+                {result.format === "markdown" && result.content && (
                   <>
                     <div className="row" style={{ marginBottom: 10 }}>
                       <span className="badge d2">Markdown 报告</span>
@@ -181,6 +182,7 @@ export default function Generate() {
                   </>
                 )}
 
+                {/* JSON 产物(图表/表格/幻灯片) */}
                 {result.format === "json" && result.spec && (
                   <>
                     <div className="row" style={{ marginBottom: 10 }}>
@@ -193,6 +195,29 @@ export default function Generate() {
                     </div>
                     <pre className="result-pre code">{JSON.stringify(result.spec, null, 2)}</pre>
                   </>
+                )}
+
+                {/* 兜底: 如果 format 不匹配但有 content,当纯文本展示 */}
+                {result.content && result.format !== "markdown" && result.format !== "json" && (
+                  <>
+                    <div className="row" style={{ marginBottom: 10 }}>
+                      <span className="badge">文本结果</span>
+                    </div>
+                    <div className="result-pre">{result.content}</div>
+                  </>
+                )}
+
+                {/* 兜底: 如果 spec 存在但 format 不是 json */}
+                {result.spec && result.format !== "json" && (
+                  <pre className="result-pre code">{JSON.stringify(result.spec, null, 2)}</pre>
+                )}
+
+                {/* 如果什么内容都没有但有 result 对象 */}
+                {!result.content && !result.spec && !result.file_path && (
+                  <div className="muted" style={{ padding: 16 }}>
+                    生成完成,但返回结果无内容字段。原始响应:
+                    <pre className="result-pre code" style={{ marginTop: 8 }}>{JSON.stringify(result, null, 2)}</pre>
+                  </div>
                 )}
               </>
             )}

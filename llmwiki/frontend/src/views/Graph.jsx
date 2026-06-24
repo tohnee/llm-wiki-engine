@@ -229,7 +229,6 @@ export default function Graph() {
                 if (n && ev) setHover({ node: n, x: ev.clientX || 0, y: ev.clientY || 0 });
                 else setHover(null);
               }}
-              width={undefined}
               height={520}
             />
           </div>
