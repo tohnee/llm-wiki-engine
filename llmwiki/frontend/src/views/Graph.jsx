@@ -30,7 +30,7 @@ export default function Graph() {
   const [apiError, setApiError] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   // ───── 新增过滤控件 ─────
-  const [hideIsolated, setHideIsolated] = useState(true);   // 默认隐藏孤立节点(度=0)
+  const [hideIsolated, setHideIsolated] = useState(false);  // 默认显示全部(避免边格式不匹配时全过滤掉)
   const [minDegree, setMinDegree] = useState(0);            // 度数阈值
   const [typeFilter, setTypeFilter] = useState(null);       // 按类型过滤
   const [topN, setTopN] = useState(80);                     // 最多显示 N 个节点(按度数)
