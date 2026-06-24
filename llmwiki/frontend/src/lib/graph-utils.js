@@ -13,6 +13,22 @@ export const TYPE_META = {
   event:   { label: "事件", color: "#EC4899" },
 };
 
+export const RELATION_META = {
+  uses:          { label: "uses", color: "#10A37F" },
+  depends_on:    { label: "depends on", color: "#2563EB" },
+  contradicts:   { label: "contradicts", color: "#DC2626" },
+  caused_by:     { label: "caused by", color: "#D97706" },
+  fixed_by:      { label: "fixed by", color: "#16A34A" },
+  superseded_by: { label: "superseded by", color: "#8B5CF6" },
+  references:    { label: "references", color: "#8A8780" },
+  related_to:    { label: "related", color: "#B5B2AA" },
+};
+
+export function normalizeRelation(rel = "") {
+  const v = String(rel || "").toLowerCase().replace(/[\s-]+/g, "_");
+  return RELATION_META[v] ? v : (v || "related_to");
+}
+
 /**
  * 解析后端返回的图数据为统一的 {nodes, edges} 结构,并计算节点度数。
  * 兼容: 直接 {nodes,edges} / {data:{...}} / {data:"json字符串"}
@@ -24,7 +40,7 @@ export function parseGraphResponse(r) {
   const edges = (gd.edges || []).map((e) => ({
     source: e.source,
     target: e.target,
-    relation: e.relation_type || e.relation || "",
+    relation: normalizeRelation(e.relation_type || e.relation || "related_to"),
   }));
 
   // 计算每个节点的真实度数
@@ -60,9 +76,10 @@ export function filterNodes(nodes, options = {}) {
 }
 
 /** 只保留两端都在 visibleNodes 内的边 */
-export function filterEdges(edges, visibleNodes) {
+export function filterEdges(edges, visibleNodes, relationFilter = null) {
   const idSet = new Set(visibleNodes.map((n) => n.entity_id));
-  return edges.filter((e) => idSet.has(e.source) && idSet.has(e.target));
+  return edges.filter((e) => idSet.has(e.source) && idSet.has(e.target)
+    && (!relationFilter || e.relation === relationFilter));
 }
 
 /** 求某节点的邻居(含边信息) */
@@ -79,4 +96,9 @@ export function neighborsOf(node, nodes, edges) {
 /** 统计各类型节点数 */
 export function countByType(nodes) {
   return nodes.reduce((m, n) => { m[n.type] = (m[n.type] || 0) + 1; return m; }, {});
+}
+
+
+export function countByRelation(edges) {
+  return edges.reduce((m, e) => { m[e.relation || "related_to"] = (m[e.relation || "related_to"] || 0) + 1; return m; }, {});
 }

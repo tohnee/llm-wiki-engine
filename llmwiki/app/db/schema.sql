@@ -3,7 +3,7 @@
 -- pgvector 承载 span 级向量检索;D0/D1 不依赖图数据库。
 
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- BM25 近似 / 模糊匹配辅助
+CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- 中文/英文模糊召回 fallback / BM25 辅助
 
 -- ============ 文档与任务 ============
 CREATE TABLE IF NOT EXISTS documents (
@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS documents (
     status        TEXT NOT NULL DEFAULT 'uploaded',
     depth         TEXT NOT NULL DEFAULT 'D1',
     page_count    INT  NOT NULL DEFAULT 0,
+    compile_error TEXT NOT NULL DEFAULT '',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, document_id)
 ) PARTITION BY LIST (tenant_id);
 

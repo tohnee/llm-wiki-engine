@@ -65,6 +65,9 @@ async def ask(req: AskReq, authorization: str = Header(...)):
         "answer": result["answer"],
         "verified_ratio": result.get("verify", {}).get("verified_ratio"),
         "escalated": result.get("escalated", False),
+        "citations": result.get("citations", []),
+        "claims": result.get("verify", {}).get("claims", []),
+        "tool_trace": result.get("tool_trace", []),
     }
 
 

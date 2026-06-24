@@ -68,6 +68,11 @@ class NeighborsReq(BaseModel):
     entity_ids: list[str]
     hops: int = 1
 
+class TypedEdgesReq(BaseModel):
+    relation_types: list[str] | None = None
+    entity_ids: list[str] | None = None
+    limit: int = 200
+
 class SearchReq(BaseModel):
     query: str
     document_ids: list[str] | None = None
@@ -95,7 +100,7 @@ async def navigate(req: NavigateReq, x_internal_auth: str = Header(...)):
     ctx = await _ctx(x_internal_auth)
     # 1) 实体链接:用 query 向量在 entities 上检索(优于字符串 ILIKE),叠加名字模糊召回
     from app.llm.embed import embed
-    qvec = embed([req.query])[0]
+    qvec = (await embed([req.query]))[0]
     cands = await _store.link_entities(ctx.tenant_id, qvec, top_k=5, name_hint=req.query)
     if not cands:
         return {"scope_document_ids": [], "entities": [], "edges": [], "wiki_hints": []}
@@ -135,6 +140,19 @@ async def neighbors(req: NeighborsReq, x_internal_auth: str = Header(...)):
     同时服务多跳取证与前端图可视化。"""
     ctx = await _ctx(x_internal_auth)
     return await _store.neighbors(ctx.tenant_id, req.entity_ids, hops=req.hops)
+
+
+@app.post("/typed_edges")
+async def typed_edges(req: TypedEdgesReq, x_internal_auth: str = Header(...)):
+    """Typed KG traversal surface: filter by relation type and/or entity ids.
+    Enables questions like what depends_on X, what was fixed_by Y, and supersession chains.
+    """
+    ctx = await _ctx(x_internal_auth)
+    from app.evidence.typed_graph import ALLOWED_RELATION_TYPES
+    edges = await _store.typed_edges(
+        ctx.tenant_id, relation_types=req.relation_types,
+        entity_ids=req.entity_ids, limit=min(max(req.limit, 1), 1000))
+    return {"relation_types": sorted(ALLOWED_RELATION_TYPES), "edges": edges}
 
 
 @app.get("/graph/export")

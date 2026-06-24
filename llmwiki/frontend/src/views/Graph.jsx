@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { api } from "../api.js";
 import GraphCanvas from "../components/GraphCanvas.jsx";
 import {
-  TYPE_META, parseGraphResponse, filterNodes, filterEdges, neighborsOf, countByType,
+  TYPE_META, RELATION_META, parseGraphResponse, filterNodes, filterEdges, neighborsOf, countByType, countByRelation,
 } from "../lib/graph-utils.js";
 
 function IconSearch() {
@@ -26,6 +26,7 @@ export default function Graph() {
   const [hideIsolated, setHideIsolated] = useState(false);  // 默认显示全部(避免边格式不匹配时全过滤掉)
   const [minDegree, setMinDegree] = useState(0);            // 度数阈值
   const [typeFilter, setTypeFilter] = useState(null);       // 按类型过滤
+  const [relationFilter, setRelationFilter] = useState(null); // 按 typed relation 过滤
   const [topN, setTopN] = useState(80);                     // 最多显示 N 个节点(按度数)
 
   useEffect(() => {
@@ -39,13 +40,15 @@ export default function Graph() {
 
   // ───── 多重过滤(用已测试的纯函数) ─────
   const filteredNodes = filterNodes(graph.nodes, { hideIsolated, minDegree, typeFilter, searchTerm, topN });
-  const filteredEdges = filterEdges(graph.edges, filteredNodes);
+  const filteredEdges = filterEdges(graph.edges, filteredNodes, relationFilter);
   const isolatedCount = graph.nodes.filter((n) => (n.degree || 0) === 0).length;
 
   const selNeighbors = neighborsOf(sel, graph.nodes, graph.edges);
 
   // 统计各类型节点数
   const typeCounts = countByType(filteredNodes);
+  const relationCounts = countByRelation(graph.edges);
+  const presentRelations = Object.keys(relationCounts).sort();
   const presentTypes = Object.keys(typeCounts).sort();
   const presentTypesAll = Array.from(new Set(graph.nodes.map((n) => n.type).filter(Boolean))).sort();
 
@@ -106,6 +109,27 @@ export default function Graph() {
               </select>
               <span>个</span>
             </div>
+
+
+            {presentRelations.length > 0 && (
+              <div className="row" style={{ gap: 4, fontSize: 12.5 }}>
+                <span>关系</span>
+                <button className={`badge ${!relationFilter ? "d1" : ""}`}
+                        style={{ cursor: "pointer" }} onClick={() => setRelationFilter(null)}>全部</button>
+                {presentRelations.map((r) => (
+                  <button key={r} className="badge relation-badge"
+                          style={{
+                            cursor: "pointer",
+                            background: relationFilter === r ? `${RELATION_META[r]?.color || "#8A8780"}1A` : "var(--surface)",
+                            color: relationFilter === r ? RELATION_META[r]?.color : "var(--ink-2)",
+                            borderColor: relationFilter === r ? `${RELATION_META[r]?.color || "#8A8780"}55` : "var(--line)",
+                          }}
+                          onClick={() => setRelationFilter(relationFilter === r ? null : r)}>
+                    {RELATION_META[r]?.label || r} · {relationCounts[r]}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {presentTypesAll.length > 0 && (
               <div className="row" style={{ gap: 4, fontSize: 12.5 }}>
@@ -212,7 +236,7 @@ export default function Graph() {
                     <div className="grow">
                       <div className="title">{node.name}</div>
                     </div>
-                    <span className="cite">{edge.relation || "—"}</span>
+                    <span className="cite relation-chip" style={{ borderColor: `${RELATION_META[edge.relation]?.color || "#8A8780"}55`, color: RELATION_META[edge.relation]?.color || "var(--ink-2)" }}>{RELATION_META[edge.relation]?.label || edge.relation || "—"}</span>
                   </div>
                 ))}
               </div>

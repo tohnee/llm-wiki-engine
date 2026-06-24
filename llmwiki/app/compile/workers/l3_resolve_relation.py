@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import uuid
+import hashlib
 from difflib import SequenceMatcher
 
 import numpy as np
@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.compile.prompts import RESOLVE_SYSTEM, RELATION_SYSTEM, build_relation_system
 from app.llm.gateway import get_gateway, Priority
 from app.models.schema import Entity, Relation
+from app.evidence.typed_graph import normalize_relation_type
 
 _S = get_settings()
 
@@ -112,10 +113,12 @@ async def extract_relations(
         for r in data.get("relations", []):
             src = name_to_id.get(r.get("source", "").lower())
             tgt = name_to_id.get(r.get("target", "").lower())
-            if src and tgt:
+            if src and tgt and src != tgt:
+                rel_type = normalize_relation_type(r.get("relation_type", "references"))
+                hid = hashlib.sha256(f"{tenant_id}:{src}:{rel_type}:{tgt}".encode()).hexdigest()[:16]
                 rels.append(Relation(
-                    relation_id=f"rl_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id,
-                    source_entity=src, relation_type=r.get("relation_type", "references"),
+                    relation_id=f"rl_{hid}", tenant_id=tenant_id,
+                    source_entity=src, relation_type=rel_type,
                     target_entity=tgt,
                 ))
     except json.JSONDecodeError:

@@ -976,3 +976,97 @@ canvas.graph { width: 100% !important; height: 100% !important; display: block; 
 .bubble .md-table tbody tr:hover { background: var(--surface-2); }
 .msg.user .bubble .md-table th { background: rgba(255,255,255,0.08); color: #fff; }
 .msg.user .bubble .md-table tbody tr:hover { background: rgba(255,255,255,0.04); }
+
+/* ===== 2026 evidence-console polish: tactile, cinematic, non-generic ===== */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(16, 163, 127, .12), transparent 28%),
+    radial-gradient(circle at 82% 18%, rgba(204, 120, 92, .14), transparent 24%),
+    linear-gradient(135deg, rgba(255,255,255,.55), rgba(250,250,247,0));
+  mix-blend-mode: multiply;
+  z-index: 0;
+}
+.shell, .main, .sidebar { position: relative; z-index: 1; }
+.brand-mark { border-radius: 12px; transform: rotate(-2deg); }
+.topbar { box-shadow: 0 1px 0 rgba(255,255,255,.8) inset; }
+.chat-wrap { position: relative; }
+.chat-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -18px -22px auto auto;
+  width: 220px;
+  height: 220px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(16,163,127,.10), transparent 62%);
+  filter: blur(6px);
+  pointer-events: none;
+}
+.msg.assistant .bubble {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,255,255,.88)),
+    radial-gradient(circle at 0 0, rgba(16,163,127,.08), transparent 40%);
+  border-color: rgba(16,163,127,.18);
+}
+.msg.user .bubble {
+  background: linear-gradient(135deg, #24211f, #3a332f);
+  color: white;
+  box-shadow: 0 12px 30px rgba(31,30,29,.16);
+}
+.audit-panel {
+  margin: 8px 0 0 38px;
+  padding: 10px 12px;
+  border: 1px solid rgba(16, 163, 127, .18);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(230,244,240,.86), rgba(255,255,255,.76));
+  box-shadow: 0 8px 22px rgba(16, 163, 127, .08);
+  max-width: min(760px, 88%);
+}
+.audit-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.audit-strip span { color: var(--accent); font-weight: 700; margin-right: 6px; }
+.audit-strip b { color: var(--ink); font-size: 12px; }
+.audit-strip em { color: var(--ink-3); font-style: normal; margin-right: 8px; }
+.trace-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.trace-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.72);
+}
+.trace-pill.ok { border-color: rgba(16,163,127,.28); color: var(--accent); }
+.trace-pill.bad { border-color: rgba(220,38,38,.28); color: var(--danger); }
+.suggestion-chip {
+  background: linear-gradient(135deg, rgba(255,255,255,.92), rgba(245,244,239,.92));
+  box-shadow: 0 10px 24px rgba(15,14,12,.06);
+}
+.composer {
+  border: 1px solid rgba(204,120,92,.22);
+  box-shadow: 0 20px 50px rgba(15,14,12,.10), inset 0 1px 0 rgba(255,255,255,.88);
+}
+
+/* Typed graph relation chips */
+.relation-badge, .relation-chip {
+  font-family: var(--font-mono);
+  letter-spacing: .02em;
+}
+.relation-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(255,255,255,.72);
+}

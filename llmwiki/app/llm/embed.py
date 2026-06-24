@@ -1,8 +1,9 @@
 """Embedding 与 reranker 封装(可插拔)。
 
 默认支持:
-1. OpenAI 兼容 API(如 DeepSeek/GLM/Qwen) → 通过 EMBED_API_KEY/BASE_URL 配置
+1. OpenAI 兼容 embedding API → 通过 EMBED_API_KEY/BASE_URL 配置
 2. local sentence-transformers → 需要本地下载模型(不配置 EMBED_API_KEY 时)
+3. rerank:本地 CrossEncoder 时为真正 cross-encoder;API 模式未配置 RERANK_API_URL 时退化为稳定等分排序。
 支持 EMBED_MOCK=1 环境变量,返回零向量(用于测试/CI)。
 """
 from __future__ import annotations
@@ -21,7 +22,7 @@ _S = get_settings()
 _MOCK_EMBED = os.environ.get("EMBED_MOCK", "0") == "1"
 _EMBED_API_KEY = os.environ.get("EMBED_API_KEY", "") or os.environ.get("EMBEDDING_API_KEY", "")
 _EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "") or os.environ.get("EMBEDDING_BASE_URL", "")
-# 默认模型:BAAI/bge-m3(1024 维),与 schema.sql 的 vector(1024) 对齐。
+# 默认模型:BAAI/bge-m3;输出会按 Settings.embed_dim 对齐,当前 schema.sql 为 vector(1536)。
 # 注意:DeepSeek 当前没有 embedding 接口;阿里百炼/硅基流动/Jina/Cohere 均提供 1024 维兼容选项。
 _EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
 
@@ -215,7 +216,8 @@ def embed_sync(texts: list[str]) -> list[list[float]]:
 
 def rerank(query: str, candidates: list[tuple[str, str]]) -> list[tuple[str, float]]:
     """candidates: [(span_id, content)] → [(span_id, score)] 按分降序。
-    注意:rerank 目前仅支持本地模型;API 模式下返回等分。"""
+    本地 CrossEncoder 可用时执行真实 rerank;API 模式未接 RERANK_API_URL 时返回
+    稳定等分结果,避免把未实现的远程 rerank 误宣传为 cross-encoder。"""
     if not candidates:
         return []
     if _MOCK_EMBED:

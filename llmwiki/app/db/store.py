@@ -12,6 +12,7 @@ import asyncpg
 
 from app.core.config import get_settings
 from app.models.schema import Chunk, Span, Fact, Entity, Relation, Document, WikiNode
+from app.evidence.typed_graph import normalize_relation_type
 
 _S = get_settings()
 
@@ -22,6 +23,7 @@ CREATE INDEX IF NOT EXISTS {p}_spans_emb ON {p}_spans
     USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS {p}_spans_tsv ON {p}_spans USING gin (tsv);
 CREATE INDEX IF NOT EXISTS {p}_spans_doc ON {p}_spans (document_id);
+CREATE INDEX IF NOT EXISTS {p}_spans_content_trgm ON {p}_spans USING gin (content gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS {p}_chunks_doc ON {p}_chunks (document_id);
 CREATE INDEX IF NOT EXISTS {p}_entities_block ON {p}_entities (name_block);
 CREATE INDEX IF NOT EXISTS {p}_entities_emb ON {p}_entities
@@ -65,6 +67,23 @@ class Store:
                 await con.execute(_PARTITION_INDEXES.format(p=p))
 
     # ---------------- 写入(批量) ----------------
+    async def upsert_document(self, tenant_id: str, document: Document) -> None:
+        """幂等创建/更新文档状态行,保证编译状态生命周期可观测。"""
+        async with self.pool.acquire() as con:
+            await con.execute(
+                """INSERT INTO documents
+                   (document_id,tenant_id,title,source_uri,status,depth,page_count,compile_error)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,'')
+                   ON CONFLICT (tenant_id,document_id) DO UPDATE SET
+                     title=EXCLUDED.title, source_uri=EXCLUDED.source_uri,
+                     depth=EXCLUDED.depth, page_count=EXCLUDED.page_count,
+                     updated_at=now()""",
+                document.document_id, tenant_id, document.title, document.source_uri,
+                document.status.value if hasattr(document.status, "value") else document.status,
+                document.depth.value if hasattr(document.depth, "value") else document.depth,
+                document.page_count,
+            )
+
     async def upsert_spans(self, tenant_id: str, spans: list[Span]) -> None:
         rows = [
             (s.span_id, tenant_id, s.chunk_id, s.document_id, s.content, s.page,
@@ -213,13 +232,14 @@ class Store:
         async with self.pool.acquire() as con:
             async with con.transaction():
                 for r in relations:
+                    rel_type = normalize_relation_type(r.relation_type)
                     existing = await con.fetchrow(
                         """SELECT relation_id, source_count, source_span_ids
                            FROM relations
                            WHERE tenant_id=$1 AND source_entity=$2
                              AND relation_type=$3 AND target_entity=$4
                            LIMIT 1""",
-                        tenant_id, r.source_entity, r.relation_type, r.target_entity)
+                        tenant_id, r.source_entity, rel_type, r.target_entity)
                     if existing:
                         new_n = (existing["source_count"] or 1) + 1
                         merged_spans = list(dict.fromkeys(
@@ -239,7 +259,7 @@ class Store:
                                 source_span_ids,confidence,source_count,last_confirmed)
                                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                                ON CONFLICT (tenant_id,relation_id) DO NOTHING""",
-                            r.relation_id, tenant_id, r.source_entity, r.relation_type,
+                            r.relation_id, tenant_id, r.source_entity, rel_type,
                             r.target_entity, r.source_span_ids, r.confidence, 1, now)
 
     async def upsert_wiki_nodes(self, tenant_id: str, nodes: list) -> None:
@@ -288,11 +308,12 @@ class Store:
             )
             return {r["chunk_id"]: r["content_hash"] for r in rows}
 
-    async def set_doc_status(self, tenant_id: str, document_id: str, status: str) -> None:
+    async def set_doc_status(self, tenant_id: str, document_id: str, status: str, error: str = "") -> None:
         async with self.pool.acquire() as con:
             await con.execute(
-                "UPDATE documents SET status=$3 WHERE tenant_id=$1 AND document_id=$2",
-                tenant_id, document_id, status,
+                """UPDATE documents SET status=$3, compile_error=$4, updated_at=now()
+                   WHERE tenant_id=$1 AND document_id=$2""",
+                tenant_id, document_id, status, error[:4000],
             )
 
     async def entity_candidates_in_block(
@@ -368,9 +389,10 @@ class Store:
                 visited |= frontier
                 next_frontier: set[str] = set()
                 for r in rows:
+                    rel_type = normalize_relation_type(r["relation_type"])
                     edges.append({
-                        "source": r["source_entity"], "relation": r["relation_type"],
-                        "target": r["target_entity"],
+                        "source": r["source_entity"], "relation": rel_type,
+                        "relation_type": rel_type, "target": r["target_entity"],
                         "span_ids": r["source_span_ids"]})
                     for nid in (r["source_entity"], r["target_entity"]):
                         if nid not in visited:
@@ -390,16 +412,37 @@ class Store:
                 seen_e.add(k); uniq_edges.append(e)
         return {"nodes": [dict(r) for r in node_rows], "edges": uniq_edges}
 
+    async def typed_edges(
+        self, tenant_id: str, relation_types: list[str] | None = None,
+        entity_ids: list[str] | None = None, limit: int = 200,
+    ) -> list[dict]:
+        """Return ontology-normalized typed edges for agent traversal and UI filtering."""
+        rels = [normalize_relation_type(r) for r in relation_types] if relation_types else None
+        async with self.pool.acquire() as con:
+            clauses = ["tenant_id=$1"]
+            params: list = [tenant_id]
+            if rels:
+                params.append(rels); clauses.append(f"relation_type = ANY(${len(params)})")
+            if entity_ids:
+                params.append(entity_ids)
+                clauses.append(f"(source_entity = ANY(${len(params)}) OR target_entity = ANY(${len(params)}))")
+            params.append(limit)
+            rows = await con.fetch(
+                f"""SELECT relation_id,source_entity,relation_type,target_entity,source_span_ids,confidence,source_count
+                    FROM relations WHERE {' AND '.join(clauses)} LIMIT ${len(params)}""",
+                *params)
+        return [{
+            "relation_id": r["relation_id"], "source": r["source_entity"],
+            "relation": normalize_relation_type(r["relation_type"]),
+            "relation_type": normalize_relation_type(r["relation_type"]),
+            "target": r["target_entity"], "span_ids": r["source_span_ids"],
+            "confidence": r["confidence"], "source_count": r["source_count"],
+        } for r in rows]
+
     async def export_graph(self, tenant_id: str) -> dict:
-        """导出全租户 KG 为 {nodes, edges},供 graph 导出/可视化。"""
+        """导出全租户 typed KG 为 {nodes, edges},供 graph 导出/可视化。"""
         async with self.pool.acquire() as con:
             nodes = await con.fetch(
                 "SELECT entity_id,name,type FROM entities WHERE tenant_id=$1", tenant_id)
-            edges = await con.fetch(
-                "SELECT source_entity,relation_type,target_entity FROM relations WHERE tenant_id=$1",
-                tenant_id)
-        return {
-            "nodes": [dict(r) for r in nodes],
-            "edges": [{"source": r["source_entity"], "relation": r["relation_type"],
-                       "target": r["target_entity"]} for r in edges],
-        }
+        edges = await self.typed_edges(tenant_id, limit=10000)
+        return {"nodes": [dict(r) for r in nodes], "edges": edges}

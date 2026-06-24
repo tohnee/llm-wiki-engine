@@ -158,6 +158,9 @@ export default function Ask() {
         ratio: r.verified_ratio,
         escalated: r.escalated,
         latency: Math.floor(took / 1000),
+        citations: r.citations || [],
+        claims: r.claims || [],
+        toolTrace: r.tool_trace || [],
       }]);
     } catch (e) {
       const took = Date.now() - t0;
@@ -246,6 +249,25 @@ export default function Ask() {
                 )}
               </div>
             )}
+            {m.role === "assistant" && !m.error && (m.citations?.length || m.claims?.length || m.toolTrace?.length) ? (
+              <div className="audit-panel">
+                <div className="audit-strip">
+                  <span>Evidence Mesh</span>
+                  <b>{m.citations?.length || 0}</b><em>citations</em>
+                  <b>{m.claims?.filter(c => c.verified === true).length || 0}/{m.claims?.length || 0}</b><em>claims</em>
+                  <b>{m.toolTrace?.length || 0}</b><em>tools</em>
+                </div>
+                {m.toolTrace?.length > 0 && (
+                  <div className="trace-list">
+                    {m.toolTrace.slice(0, 6).map((t, ti) => (
+                      <span key={ti} className={`trace-pill ${t.ok ? "ok" : "bad"}`}>
+                        {t.turn}:{t.tool}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         ))}
 
