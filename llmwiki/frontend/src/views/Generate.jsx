@@ -17,8 +17,7 @@ export default function Generate() {
 
   function handleTypeChange(newType) {
     const def = getDefaultSubType(newType);
-    setType(newType);
-    setSubType(def);
+    setType(newType); setSubType(def);
     setInstruction(getTemplateInstruction(newType, def));
     setResult(null);
   }
@@ -31,12 +30,10 @@ export default function Generate() {
 
   async function run(asFile) {
     if (!instruction.trim()) return;
-    setBusy(true);
-    setResult(null);
+    setBusy(true); setResult(null);
     try {
       const payload = { instruction, artifact_type: type };
       if (docFilter.trim()) {
-        // 按文档筛选:支持逗号分隔的文档 ID 或标题关键词
         payload.document_ids = docFilter.split(",").map((s) => s.trim()).filter(Boolean);
       }
       const fn = asFile ? api.generateFile : api.generate;
@@ -50,202 +47,181 @@ export default function Generate() {
   }
 
   return (
-    <>
-      {/* ---- 主类型卡片 ---- */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <label className="label">产物类型</label>
-        <div className="row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
-          {TYPES.map((t) => (
-            <button
-              key={t.v}
-              className={`btn ${type === t.v ? "" : "ghost"}`}
-              onClick={() => handleTypeChange(t.v)}
-            >
-              <span style={{ marginRight: 4 }}>{t.glyph}</span>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ---- 子类型(Skill 模板选择) ---- */}
-      {tpl && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <label className="label">
-            {tpl.glyph} {tpl.label} — 选择模板
-          </label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
-            {tpl.subTypes.map((st) => (
-              <button
-                key={st.id}
-                className={`btn ${subType === st.id ? "" : "ghost"}`}
-                onClick={() => handleSubTypeChange(st.id)}
-                style={{
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  gap: 4,
-                  padding: "12px 14px",
-                  height: "auto",
-                  textAlign: "left",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: 13 }}>
-                  <span>{st.icon}</span>
-                  {st.label}
-                </div>
-                {st.desc && (
-                  <div style={{ fontSize: 11.5, color: subType === st.id ? "rgba(255,255,255,0.7)" : "var(--ink-3)", fontWeight: 400 }}>
-                    {st.desc}
-                  </div>
-                )}
+    <div className="split">
+      <div className="split-main">
+        {/* 类型选择 */}
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">产物类型</div>
+              <div className="card-desc">选择想生成的形态,再挑模板</div>
+            </div>
+          </div>
+          <div className="choice-grid">
+            {TYPES.map((t) => (
+              <button key={t.v} className={`choice ${type === t.v ? "active" : ""}`}
+                      onClick={() => handleTypeChange(t.v)}>
+                <span className="choice-title">
+                  <span>{t.glyph}</span>{t.label}
+                </span>
+                {t.desc && <span className="choice-desc">{t.desc}</span>}
               </button>
             ))}
           </div>
         </div>
-      )}
 
-      {/* ---- 指令编辑区 ---- */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <label className="label">指令{currentSub && currentSub.id !== "custom" ? `(${currentSub.label} 模板已预设)` : ""}</label>
-        <textarea
-          className="input"
-          rows={4}
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          placeholder="输入生成指令,或选择上方模板自动填充…"
-          style={{ fontFamily: "var(--sans)", fontSize: 13.5, lineHeight: 1.6 }}
-        />
-
-        {/* 图表类型子类型额外提示 */}
-        {type === "chart" && currentSub && currentSub.chartHint && (
-          <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-3)" }}>
-            💡 提示: {currentSub.chartHint}。请确保指令中指明要提取的数据字段。
+        {/* 模板选择 */}
+        {tpl && (
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <div className="card-title">{tpl.label} · 模板</div>
+                <div className="card-desc">挑一个模板,指令会自动预填到下方</div>
+              </div>
+            </div>
+            <div className="choice-grid">
+              {tpl.subTypes.map((st) => (
+                <button key={st.id} className={`choice ${subType === st.id ? "active" : ""}`}
+                        onClick={() => handleSubTypeChange(st.id)}>
+                  <span className="choice-title">
+                    {st.icon && <span>{st.icon}</span>}{st.label}
+                  </span>
+                  {st.desc && <span className="choice-desc">{st.desc}</span>}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        <div style={{ height: 12 }} />
+        {/* 指令编辑 */}
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">指令</div>
+              <div className="card-desc">
+                {currentSub && currentSub.id !== "custom" ? `已预填「${currentSub.label}」模板,可继续编辑` : "自由输入生成指令"}
+              </div>
+            </div>
+          </div>
 
-        {/* 文档筛选(可选) */}
-        <label className="label">文档筛选(可选)</label>
-        <input
-          className="input"
-          value={docFilter}
-          onChange={(e) => setDocFilter(e.target.value)}
-          placeholder="留空=全部文档,或用逗号分隔指定文档ID"
-          style={{ marginBottom: 12 }}
-        />
+          <textarea className="input" rows={6} value={instruction}
+                    onChange={(e) => setInstruction(e.target.value)}
+                    placeholder="输入生成指令,或先选模板自动填充…" />
 
-        <div className="row">
-          <button className="btn" onClick={() => run(false)} disabled={busy}>
-            {busy ? "生成中…" : "🚀 生成内容"}
-          </button>
-          <button className="btn ghost" onClick={() => run(true)} disabled={busy}>
-            生成并导出文件
-          </button>
-          <span className="muted">
-            {type === "slides" ? "生成PPT大纲(JSON)" :
-             type === "chart" ? "生成图表规范(JSON)" :
-             type === "table" ? "生成结构化表格(JSON)" :
-             "生成Markdown报告"}
-          </span>
-        </div>
-      </div>
+          {type === "chart" && currentSub?.chartHint && (
+            <div className="form-hint" style={{ marginTop: 6 }}>
+              💡 提示: {currentSub.chartHint}。请在指令中指明要提取的数据字段。
+            </div>
+          )}
 
-      {/* ---- 加载状态 ---- */}
-      {busy && (
-        <div className="card" style={{ textAlign: "center", padding: 30 }}>
-          <div className="spinner">
-            <span style={{ fontSize: 15 }}>⏳</span> 生成中,正在检索证据并调用 AI 模型…
-            <span className="dots" />
+          <div className="form-block" style={{ marginTop: 14 }}>
+            <label className="label">文档筛选(可选)</label>
+            <input className="input" value={docFilter}
+                   onChange={(e) => setDocFilter(e.target.value)}
+                   placeholder="留空 = 全部文档,或用逗号分隔指定 document_id" />
+          </div>
+
+          <div className="row" style={{ marginTop: 14 }}>
+            <button className="btn primary" onClick={() => run(false)} disabled={busy || !instruction.trim()}>
+              {busy ? "生成中…" : "生成内容"}
+            </button>
+            <button className="btn ghost" onClick={() => run(true)} disabled={busy || !instruction.trim()}>
+              生成并导出文件
+            </button>
+            <span className="muted">
+              {type === "slides" ? "→ PPT 大纲 JSON" :
+               type === "chart" ? "→ 图表规范 JSON" :
+               type === "table" ? "→ 结构化表格 JSON" :
+                                  "→ Markdown 报告"}
+            </span>
           </div>
         </div>
-      )}
 
-      {/* ---- 结果展示 ---- */}
-      {result && (
-        <div className="card" style={{ marginTop: 4 }}>
-          {result.error ? (
-            <div style={{ color: "var(--prov-ambiguous)", display: "flex", alignItems: "center", gap: 8 }}>
-              <span>⚠️</span> 生成失败: {result.error}
-            </div>
-          ) : (
-            <>
-              {/* 文件导出结果 */}
-              {result.file_path && (
-                <div style={{ marginBottom: 14, padding: "10px 14px", background: "var(--surface)", borderRadius: "var(--radius-sm)" }}>
-                  <div className="row" style={{ gap: 8 }}>
-                    <span>✅</span>
-                    <div>
-                      <div className="title" style={{ fontSize: 13 }}>已生成文件</div>
-                      <div className="mono muted" style={{ fontSize: 11.5, marginTop: 2 }}>{result.file_path}</div>
+        {/* 加载态 */}
+        {busy && (
+          <div className="card" style={{ textAlign: "center", padding: 36 }}>
+            <span className="spinner">
+              正在检索证据并调用模型
+              <span className="dot-pulse"><i/><i/><i/></span>
+            </span>
+          </div>
+        )}
+
+        {/* 结果 */}
+        {result && (
+          <div className="card">
+            {result.error ? (
+              <div style={{ color: "var(--danger)", display: "flex", alignItems: "center", gap: 8 }}>
+                <span>⚠️</span> 生成失败: {result.error}
+              </div>
+            ) : (
+              <>
+                {result.file_path && (
+                  <div className="list-row" style={{ marginBottom: 12 }}>
+                    <span style={{ fontSize: 16 }}>✅</span>
+                    <div className="grow">
+                      <div className="title">已生成文件</div>
+                      <div className="sub mono">{result.file_path}</div>
                     </div>
-                    <span className="badge" style={{ marginLeft: "auto" }}>证据 {result.evidence_count} 条</span>
+                    {result.evidence_count != null && (
+                      <span className="badge">证据 {result.evidence_count} 条</span>
+                    )}
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* 报告(markdown) */}
-              {result.format === "markdown" && (
-                <div>
-                  <div className="row" style={{ marginBottom: 10, gap: 8 }}>
-                    <span className="badge" style={{ background: "var(--accent-soft)", color: "var(--accent-hover)", borderColor: "rgba(124,92,252,0.25)" }}>
-                      Markdown 报告
-                    </span>
-                    <span className="muted">基于 {result.evidence_count} 条证据生成</span>
-                  </div>
-                  <div
-                    style={{
-                      background: "rgba(0,0,0,0.2)",
-                      borderRadius: "var(--radius-sm)",
-                      padding: 20,
-                      fontSize: 13.5,
-                      lineHeight: 1.7,
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "var(--sans)",
-                      maxHeight: 500,
-                      overflow: "auto",
-                    }}
-                  >
-                    {result.content}
-                  </div>
-                </div>
-              )}
+                {result.format === "markdown" && (
+                  <>
+                    <div className="row" style={{ marginBottom: 10 }}>
+                      <span className="badge d2">Markdown 报告</span>
+                      {result.evidence_count != null && (
+                        <span className="muted">基于 {result.evidence_count} 条证据</span>
+                      )}
+                    </div>
+                    <div className="result-pre">{result.content}</div>
+                  </>
+                )}
 
-              {/* JSON 格式(图表/表格/幻灯片) */}
-              {result.format === "json" && result.spec && (
-                <div>
-                  <div className="row" style={{ marginBottom: 10, gap: 8 }}>
-                    <span className="badge" style={{ background: "rgba(96,165,250,0.1)", color: "#60A5FA", borderColor: "rgba(96,165,250,0.2)" }}>
-                      JSON 规范
-                    </span>
-                    <span className="muted">
-                      {result.spec.slides ? `${result.spec.slides.length} 页幻灯片` :
-                       result.spec.columns ? `${result.spec.columns.length} 列 · ${result.spec.rows?.length || 0} 行` :
-                       result.spec.chart_type ? `${result.spec.chart_type} 图` : ""}
-                    </span>
-                  </div>
-                  <pre
-                    className="mono"
-                    style={{
-                      background: "rgba(0,0,0,0.2)",
-                      borderRadius: "var(--radius-sm)",
-                      padding: 16,
-                      fontSize: 12,
-                      lineHeight: 1.5,
-                      whiteSpace: "pre-wrap",
-                      maxHeight: 400,
-                      overflow: "auto",
-                      margin: 0,
-                    }}
-                  >
-                    {JSON.stringify(result.spec, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </>
+                {result.format === "json" && result.spec && (
+                  <>
+                    <div className="row" style={{ marginBottom: 10 }}>
+                      <span className="badge d0">JSON 规范</span>
+                      <span className="muted">
+                        {result.spec.slides ? `${result.spec.slides.length} 页幻灯片` :
+                         result.spec.columns ? `${result.spec.columns.length} 列 · ${result.spec.rows?.length || 0} 行` :
+                         result.spec.chart_type ? `${result.spec.chart_type} 图` : ""}
+                      </span>
+                    </div>
+                    <pre className="result-pre code">{JSON.stringify(result.spec, null, 2)}</pre>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 右侧帮助 */}
+      <aside className="split-side">
+        <div className="card" style={{ padding: 18 }}>
+          <div className="card-title" style={{ marginBottom: 8, fontSize: 13 }}>当前产物</div>
+          <div style={{ fontSize: 13, color: "var(--ink)" }}>
+            <span style={{ fontWeight: 600 }}>{tpl?.label || "—"}</span>
+            {currentSub && <span style={{ color: "var(--ink-3)" }}> · {currentSub.label}</span>}
+          </div>
+          {currentSub?.desc && (
+            <div className="muted" style={{ marginTop: 6 }}>{currentSub.desc}</div>
           )}
         </div>
-      )}
-    </>
+
+        <div className="card" style={{ padding: 18 }}>
+          <div className="card-title" style={{ marginBottom: 8, fontSize: 13 }}>使用建议</div>
+          <ul style={{ fontSize: 12.5, color: "var(--ink-2)", paddingLeft: 18, margin: 0, lineHeight: 1.7 }}>
+            <li>指令越具体,产出越聚焦</li>
+            <li>用文档筛选缩小检索范围,可大幅减少幻觉</li>
+            <li>JSON 产物可在外部渲染为 docx / xlsx / pptx</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
   );
 }

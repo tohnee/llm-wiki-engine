@@ -18,29 +18,42 @@ export default function Login({ onLogin }) {
 
   return (
     <div className="auth-wrap">
-      <div className="card auth-card">
+      <div className="auth-card">
         <div className="brand">
           <div className="brand-mark">W</div>
           <div>
             <div className="brand-name">LLM-Wiki</div>
-            <div className="brand-sub">KNOWLEDGE ENGINE</div>
+            <div className="brand-sub">Knowledge Engine</div>
           </div>
         </div>
-        <label className="label">邮箱</label>
-        <input className="input" value={email} onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@company.com" onKeyDown={(e) => e.key === "Enter" && submit()} />
-        <div style={{ height: 12 }} />
-        <label className="label">密码</label>
-        <input className="input" type="password" value={pw} onChange={(e) => setPw(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()} />
-        {err && <div style={{ color: "var(--prov-ambiguous)", fontSize: 12.5, marginTop: 10 }}>{err}</div>}
-        <div style={{ height: 18 }} />
-        <button className="btn" style={{ width: "100%" }} onClick={submit} disabled={busy}>
+
+        <h1 className="auth-title">登录到工作台</h1>
+        <p className="auth-subtitle">使用管理员分配给你的账号继续</p>
+
+        {err && <div className="error-msg">{err}</div>}
+
+        <div className="field">
+          <label className="label">邮箱</label>
+          <input className="input" type="email" autoComplete="email"
+                 value={email} onChange={(e) => setEmail(e.target.value)}
+                 placeholder="you@company.com"
+                 onKeyDown={(e) => e.key === "Enter" && submit()} />
+        </div>
+
+        <div className="field">
+          <label className="label">密码</label>
+          <input className="input" type="password" autoComplete="current-password"
+                 value={pw} onChange={(e) => setPw(e.target.value)}
+                 placeholder="••••••••"
+                 onKeyDown={(e) => e.key === "Enter" && submit()} />
+        </div>
+
+        <button className="btn primary lg" style={{ width: "100%", marginTop: 4 }}
+                onClick={submit} disabled={busy || !email || !pw}>
           {busy ? "登录中…" : "登录"}
         </button>
-        <div className="muted" style={{ marginTop: 14, textAlign: "center" }}>
-          租户与账号由管理员创建
-        </div>
+
+        <div className="auth-foot">租户与账号由平台管理员创建</div>
       </div>
     </div>
   );
