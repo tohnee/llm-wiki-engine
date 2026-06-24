@@ -58,7 +58,7 @@ class Retriever:
                 )
                 vec_ids = [r["span_id"] for r in vec_rows]
 
-            # BM25(tsvector)全文检索 — 使用 websearch_to_tsquery 更好支持中文
+            # BM25(tsvector)全文检索;中文召回由下方 pg_trgm fallback 补强
             params_b = params + [query, cand_k]
             bm_rows = await con.fetch(
                 f"""SELECT span_id FROM spans
@@ -69,6 +69,18 @@ class Retriever:
                 *params_b,
             )
             bm_ids = [r["span_id"] for r in bm_rows]
+
+            # 中文/混合语料 fallback:pg_trgm 相似度不依赖空格分词,弥补 simple tsvector 对中文的弱召回。
+            params_t = params + [query, cand_k]
+            tri_rows = await con.fetch(
+                f"""SELECT span_id FROM spans
+                    WHERE tenant_id=$1 {scope_sql}
+                      AND content % ${len(params)+1}
+                    ORDER BY similarity(content, ${len(params)+1}) DESC
+                    LIMIT ${len(params)+2}""",
+                *params_t,
+            )
+            trigram_ids = [r["span_id"] for r in tri_rows]
 
         # 图遍历流(v2 第三流):query 向量 → link_entities → neighbors → 收集关联 span_ids
         # 捕获 BM25/向量都错过的结构连接(如"升级 Redis 的影响"沿 depends_on 边找到下游服务)
@@ -99,8 +111,8 @@ class Retriever:
         except Exception:
             pass  # 图遍历失败不影响主检索(BM25+向量仍可用)
 
-        # RRF 三流融合:向量 + BM25 + 图遍历
-        streams = [s for s in [vec_ids, bm_ids, graph_ids] if s]
+        # RRF 多流融合:向量 + BM25 + trigram中文fallback + 图遍历
+        streams = [s for s in [vec_ids, bm_ids, trigram_ids, graph_ids] if s]
         if len(streams) >= 2:
             fused = _rrf_merge(streams, _S.rrf_k)
             top_ids = sorted(fused, key=fused.get, reverse=True)[:cand_k]
