@@ -37,6 +37,17 @@ _PARTITIONED_TABLES = [
 ]
 
 
+def compile_depth_capabilities(depth: str) -> dict:
+    """Describe what each compile depth contributes to preview, QA, and KG."""
+    d = (depth or "D1").upper()
+    table = {
+        "D0": {"wiki": "draft_summary", "graph": False, "qa": "span_search", "description": "parse + chunk/span + embedding; preview uses section summaries."},
+        "D1": {"wiki": "draft_summary_with_facts", "graph": False, "qa": "span_search + facts/entities", "description": "D0 plus facts/entities/resolution; no relation graph render."},
+        "D2": {"wiki": "rendered_wiki_nodes", "graph": True, "qa": "navigation-first graph + span evidence", "description": "D1 plus typed relations and rendered wiki nodes."},
+    }
+    return table.get(d, table["D1"])
+
+
 def _safe_part(tenant_id: str) -> str:
     """分区后缀:仅允许字母数字下划线,防注入。"""
     s = "".join(c if c.isalnum() else "_" for c in tenant_id)
@@ -277,6 +288,82 @@ class Store:
                      content=EXCLUDED.content, provenance_mix=EXCLUDED.provenance_mix""",
                 rows,
             )
+
+
+    async def wiki_preview(self, tenant_id: str, document_id: str) -> dict:
+        """Return a compiled preview for any depth.
+
+        D2 returns rendered wiki_nodes; D0/D1 return a draft preview from chunk summaries so
+        users can inspect compile output immediately after upload.
+        """
+        async with self.pool.acquire() as con:
+            doc = await con.fetchrow(
+                "SELECT document_id,title,status,depth,compile_error FROM documents WHERE tenant_id=$1 AND document_id=$2",
+                tenant_id, document_id)
+            if not doc:
+                return {}
+            nodes = await con.fetch(
+                """SELECT DISTINCT w.node_id,w.title,w.content,w.entity_id,w.provenance_mix,w.tier
+                   FROM wiki_nodes w
+                   JOIN entities e ON e.tenant_id=w.tenant_id AND e.entity_id=w.entity_id
+                   WHERE w.tenant_id=$1 AND $2 = ANY(e.document_ids)
+                   ORDER BY w.title LIMIT 50""",
+                tenant_id, document_id)
+            chunks = await con.fetch(
+                """SELECT chunk_id,section_path,summary,page_start,page_end,tier
+                   FROM chunks WHERE tenant_id=$1 AND document_id=$2
+                   ORDER BY section_path, page_start, chunk_id LIMIT 200""",
+                tenant_id, document_id)
+            facts = await con.fetch(
+                """SELECT fact_id,subject_entity,predicate,object_value,provenance,source_span_ids
+                   FROM facts WHERE tenant_id=$1 AND document_id=$2
+                   ORDER BY fact_id LIMIT 100""",
+                tenant_id, document_id)
+        mode = "wiki_nodes" if nodes else "draft_summary"
+        return {
+            "document": dict(doc), "mode": mode,
+            "depth_explanation": compile_depth_capabilities(doc["depth"]),
+            "wiki_nodes": [dict(r) for r in nodes],
+            "sections": [dict(r) for r in chunks],
+            "facts": [dict(r) for r in facts],
+        }
+
+    async def list_ambiguous_facts(self, tenant_id: str, limit: int = 50) -> list[dict]:
+        async with self.pool.acquire() as con:
+            rows = await con.fetch(
+                """SELECT fact_id,document_id,subject_entity,predicate,object_value,
+                          provenance,contradicts,source_span_ids,stale,superseded_by
+                   FROM facts
+                   WHERE tenant_id=$1 AND provenance='ambiguous' AND NOT stale
+                   ORDER BY source_count DESC, fact_id LIMIT $2""",
+                tenant_id, limit)
+        return [dict(r) for r in rows]
+
+    async def resolve_ambiguous_fact(
+        self, tenant_id: str, fact_id: str, action: str, superseded_by: str | None = None,
+    ) -> dict:
+        """Human review action for ambiguous facts: confirm / reject / supersede."""
+        if action not in {"confirm", "reject", "supersede"}:
+            raise ValueError("action must be confirm|reject|supersede")
+        async with self.pool.acquire() as con:
+            if action == "confirm":
+                row = await con.fetchrow(
+                    """UPDATE facts SET provenance='extracted', contradicts='{}', stale=false,
+                       superseded_by=NULL, last_confirmed=extract(epoch from now())
+                       WHERE tenant_id=$1 AND fact_id=$2 RETURNING fact_id,provenance,stale,superseded_by""",
+                    tenant_id, fact_id)
+            elif action == "reject":
+                row = await con.fetchrow(
+                    """UPDATE facts SET stale=true, last_confirmed=extract(epoch from now())
+                       WHERE tenant_id=$1 AND fact_id=$2 RETURNING fact_id,provenance,stale,superseded_by""",
+                    tenant_id, fact_id)
+            else:
+                row = await con.fetchrow(
+                    """UPDATE facts SET stale=true, superseded_by=$3,
+                       last_confirmed=extract(epoch from now())
+                       WHERE tenant_id=$1 AND fact_id=$2 RETURNING fact_id,provenance,stale,superseded_by""",
+                    tenant_id, fact_id, superseded_by)
+        return dict(row) if row else {}
 
     # ---------------- 读取(强制 tenant_id) ----------------
     async def get_span(self, tenant_id: str, span_id: str) -> Optional[dict]:

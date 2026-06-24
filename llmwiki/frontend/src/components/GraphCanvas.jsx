@@ -20,7 +20,7 @@ const RELATION_COLORS = {
 export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover, width, height }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
-  const stateRef = useRef({ positions: new Map(), velocities: new Map(), raf: null, hovered: null });
+  const stateRef = useRef({ positions: new Map(), velocities: new Map(), raf: null, hovered: null, tick: 0 });
   const [measuredWidth, setMeasuredWidth] = useState(width || 800);
   const [ready, setReady] = useState(false);
 
@@ -57,10 +57,12 @@ export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover,
     cleanNodes.forEach((n, i) => {
       const id = n.entity_id || n.id;
       if (!st.positions.has(id)) {
-        const angle = (i / cleanNodes.length) * Math.PI * 2;
+        let seed = 0; for (const ch of String(id)) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+        const angle = (i / Math.max(1, cleanNodes.length)) * Math.PI * 2 + (seed % 100) / 500;
+        const jitter = ((seed % 17) - 8) * 0.8;
         st.positions.set(id, {
-          x: cx + Math.cos(angle) * r + (Math.random() - 0.5) * 20,
-          y: cy + Math.sin(angle) * r + (Math.random() - 0.5) * 20,
+          x: cx + Math.cos(angle) * (r + jitter),
+          y: cy + Math.sin(angle) * (r + jitter),
         });
         st.velocities.set(id, { x: 0, y: 0 });
       }
@@ -89,15 +91,18 @@ export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover,
     const SPRING = 0.02;
     const SPRING_LEN = 80;
     const CENTER = 0.005;
-    const DAMPING = 0.85;
+    const DAMPING = 0.72;
     const MAX_VEL = 10;
 
     let running = true;
     const pos = st.positions;
     const vel = st.velocities;
 
+    st.tick = 0;
     function tick() {
       if (!running) return;
+      st.tick += 1;
+      let energy = 0;
 
       // 斥力(O(n²) 但 452 节点可接受)
       const ids = cleanNodes.map((n) => n.entity_id || n.id);
@@ -137,6 +142,7 @@ export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover,
         if (v.x < -MAX_VEL) v.x = -MAX_VEL;
         if (v.y > MAX_VEL) v.y = MAX_VEL;
         if (v.y < -MAX_VEL) v.y = -MAX_VEL;
+        energy += Math.abs(v.x) + Math.abs(v.y);
       }
       // 应用速度
       for (const id of ids) {
@@ -147,7 +153,7 @@ export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover,
         p.y = Math.max(20, Math.min(h - 20, p.y));
       }
       draw();
-      st.raf = requestAnimationFrame(tick);
+      if (st.tick < 360 && energy > 0.08) st.raf = requestAnimationFrame(tick);
     }
 
     function draw() {

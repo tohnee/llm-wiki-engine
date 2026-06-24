@@ -94,6 +94,10 @@ class LookupEntityReq(BaseModel):
 class TocReq(BaseModel):
     doc_id: str
 
+class ResolveFactReq(BaseModel):
+    action: str
+    superseded_by: str | None = None
+
 
 @app.post("/navigate")
 async def navigate(req: NavigateReq, x_internal_auth: str = Header(...)):
@@ -165,6 +169,25 @@ async def graph_export(fmt: str = "json", x_internal_auth: str = Header(...)):
         raise HTTPException(400, "fmt must be json|graphml|cypher|html")
     return {"format": fmt, "node_count": len(graph["nodes"]),
             "edge_count": len(graph["edges"]), "data": export(graph, fmt)}
+
+
+@app.get("/facts/ambiguous")
+async def ambiguous_facts(limit: int = 50, x_internal_auth: str = Header(...)):
+    ctx = await _ctx(x_internal_auth)
+    return {"facts": await _store.list_ambiguous_facts(ctx.tenant_id, limit=min(max(limit, 1), 200))}
+
+
+@app.post("/facts/{fact_id}/resolve")
+async def resolve_fact(fact_id: str, req: ResolveFactReq, x_internal_auth: str = Header(...)):
+    ctx = await _ctx(x_internal_auth)
+    try:
+        out = await _store.resolve_ambiguous_fact(
+            ctx.tenant_id, fact_id, req.action, superseded_by=req.superseded_by)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not out:
+        raise HTTPException(404, "fact not found in tenant scope")
+    return out
 
 
 @app.get("/status")

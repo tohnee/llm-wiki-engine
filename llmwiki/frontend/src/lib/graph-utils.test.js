@@ -142,3 +142,14 @@ describe("graph-utils: typed relations", () => {
     expect(countByRelation([{ relation: "uses" }, { relation: "uses" }, { relation: "fixed_by" }])).toEqual({ uses: 2, fixed_by: 1 });
   });
 });
+
+describe("GraphCanvas stabilization source", () => {
+  it("uses bounded ticks and deterministic jitter", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const src = fs.readFileSync(path.join(process.cwd(), "src/components/GraphCanvas.jsx"), "utf8");
+    expect(src).toContain("st.tick < 360");
+    expect(src).toContain("charCodeAt");
+    expect(src).not.toContain("Math.random() - 0.5");
+  });
+});

@@ -71,6 +71,13 @@ async def ask(req: AskReq, authorization: str = Header(...)):
     }
 
 
+@app.get("/sessions/{session_id}/history")
+async def session_history(session_id: str, authorization: str = Header(...)):
+    ctx, _role = auth_context(authorization, session_id=session_id)
+    turns = await _memory.load(ctx) if _memory else []
+    return {"session_id": session_id, "turns": turns}
+
+
 @app.get("/health")
 async def health():
     return {"ok": True}
@@ -94,6 +101,35 @@ async def graph(fmt: str = "json", authorization: str = Header(...)):
     try:
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.get(f"{_EVIDENCE}/graph/export", params={"fmt": fmt}, headers=_signed(ctx))
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError:
+        raise HTTPException(503, f"evidence service unavailable at {_EVIDENCE}")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, f"evidence error: {e.response.text[:200]}")
+
+
+
+@app.get("/facts/ambiguous")
+async def ambiguous_facts(limit: int = 50, authorization: str = Header(...)):
+    ctx, _ = auth_context(authorization, session_id="facts")
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(f"{_EVIDENCE}/facts/ambiguous", params={"limit": limit}, headers=_signed(ctx))
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError:
+        raise HTTPException(503, f"evidence service unavailable at {_EVIDENCE}")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, f"evidence error: {e.response.text[:200]}")
+
+
+@app.post("/facts/{fact_id}/resolve")
+async def resolve_fact(fact_id: str, payload: dict, authorization: str = Header(...)):
+    ctx, _ = auth_context(authorization, session_id="facts")
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(f"{_EVIDENCE}/facts/{fact_id}/resolve", json=payload, headers=_signed(ctx))
             r.raise_for_status()
             return r.json()
     except httpx.ConnectError:

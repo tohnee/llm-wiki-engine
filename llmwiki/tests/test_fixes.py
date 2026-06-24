@@ -219,3 +219,46 @@ def test_graph_utils_supports_typed_relation_filter_source():
     assert "normalizeRelation" in text
     assert "relationFilter" in text
     assert "countByRelation" in text
+
+
+def test_compile_depth_capabilities_and_wiki_preview_shape():
+    from app.db.store import compile_depth_capabilities
+    assert compile_depth_capabilities("D0")["wiki"] == "draft_summary"
+    assert compile_depth_capabilities("D1")["graph"] is False
+    assert compile_depth_capabilities("D2")["graph"] is True
+
+
+def test_generation_history_helpers_are_tenant_scoped(tmp_path, monkeypatch):
+    import app.generation.service as svc
+    monkeypatch.setattr(svc, "OUTPUT_DIR", str(tmp_path))
+    svc._record_history("t1", {"artifact_id": "a1", "instruction": "生成报告"})
+    svc._record_history("t2", {"artifact_id": "b1", "instruction": "其他租户"})
+    assert [x["artifact_id"] for x in svc._read_history("t1")] == ["a1"]
+    assert [x["artifact_id"] for x in svc._read_history("t2")] == ["b1"]
+    assert svc._safe_name("../bad name?.docx") == "..badname.docx"
+
+
+def test_resolve_ambiguous_fact_sql_actions():
+    import asyncio
+    from app.db.store import Store
+
+    calls = []
+    class FakeCon:
+        async def fetchrow(self, sql, *params):
+            calls.append((sql, params))
+            return {"fact_id": params[1], "provenance": "extracted", "stale": "stale=true" in sql, "superseded_by": params[2] if len(params) > 2 else None}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+    class FakePool:
+        def acquire(self): return FakeCon()
+
+    async def run():
+        store = Store(FakePool())
+        a = await store.resolve_ambiguous_fact("t1", "f1", "confirm")
+        b = await store.resolve_ambiguous_fact("t1", "f2", "reject")
+        c = await store.resolve_ambiguous_fact("t1", "f3", "supersede", superseded_by="f4")
+        return a, b, c
+    a, b, c = asyncio.run(run())
+    assert a["fact_id"] == "f1"
+    assert b["stale"] is True
+    assert c["superseded_by"] == "f4"

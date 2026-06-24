@@ -58,12 +58,18 @@ export const api = {
   ingest: (b) => req("/api/ingest/ingest", { method: "POST", body: b }),
   listDocs: () => req("/api/ingest/documents"),
   docStatus: (id) => req(`/api/ingest/documents/${id}/status`),
+  docPreview: (id) => req(`/api/ingest/documents/${id}/preview`),
+  compileDepths: () => req("/api/ingest/compile-depths"),
   // 问答
   ask: (question, session_id) => req("/api/query/ask", { method: "POST", body: { question, session_id } }),
+  askHistory: (session_id) => req(`/api/query/sessions/${session_id}/history`),
   // 生成
   generate: (b) => req("/api/gen/generate", { method: "POST", body: b }),
   generateFile: (b) => req("/api/gen/generate/file", { method: "POST", body: b }),
+  generationHistory: () => req("/api/gen/history"),
   // 图谱 / 健康(经查询网关透传 evidence)
   graph: (fmt = "json") => req(`/api/query/graph?fmt=${fmt}`),
   status: () => req("/api/query/status"),
+  ambiguousFacts: () => req("/api/query/facts/ambiguous"),
+  resolveFact: (fact_id, body) => req(`/api/query/facts/${fact_id}/resolve`, { method: "POST", body }),
 };
