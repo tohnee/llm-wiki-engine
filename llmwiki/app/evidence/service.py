@@ -95,7 +95,7 @@ async def navigate(req: NavigateReq, x_internal_auth: str = Header(...)):
     ctx = await _ctx(x_internal_auth)
     # 1) 实体链接:用 query 向量在 entities 上检索(优于字符串 ILIKE),叠加名字模糊召回
     from app.llm.embed import embed
-    qvec = embed([req.query])[0]
+    qvec = (await embed([req.query]))[0]
     cands = await _store.link_entities(ctx.tenant_id, qvec, top_k=5, name_hint=req.query)
     if not cands:
         return {"scope_document_ids": [], "entities": [], "edges": [], "wiki_hints": []}

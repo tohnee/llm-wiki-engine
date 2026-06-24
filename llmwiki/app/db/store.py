@@ -22,6 +22,7 @@ CREATE INDEX IF NOT EXISTS {p}_spans_emb ON {p}_spans
     USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS {p}_spans_tsv ON {p}_spans USING gin (tsv);
 CREATE INDEX IF NOT EXISTS {p}_spans_doc ON {p}_spans (document_id);
+CREATE INDEX IF NOT EXISTS {p}_spans_content_trgm ON {p}_spans USING gin (content gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS {p}_chunks_doc ON {p}_chunks (document_id);
 CREATE INDEX IF NOT EXISTS {p}_entities_block ON {p}_entities (name_block);
 CREATE INDEX IF NOT EXISTS {p}_entities_emb ON {p}_entities
@@ -65,6 +66,23 @@ class Store:
                 await con.execute(_PARTITION_INDEXES.format(p=p))
 
     # ---------------- 写入(批量) ----------------
+    async def upsert_document(self, tenant_id: str, document: Document) -> None:
+        """幂等创建/更新文档状态行,保证编译状态生命周期可观测。"""
+        async with self.pool.acquire() as con:
+            await con.execute(
+                """INSERT INTO documents
+                   (document_id,tenant_id,title,source_uri,status,depth,page_count,compile_error)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,'')
+                   ON CONFLICT (tenant_id,document_id) DO UPDATE SET
+                     title=EXCLUDED.title, source_uri=EXCLUDED.source_uri,
+                     depth=EXCLUDED.depth, page_count=EXCLUDED.page_count,
+                     updated_at=now()""",
+                document.document_id, tenant_id, document.title, document.source_uri,
+                document.status.value if hasattr(document.status, "value") else document.status,
+                document.depth.value if hasattr(document.depth, "value") else document.depth,
+                document.page_count,
+            )
+
     async def upsert_spans(self, tenant_id: str, spans: list[Span]) -> None:
         rows = [
             (s.span_id, tenant_id, s.chunk_id, s.document_id, s.content, s.page,
@@ -288,11 +306,12 @@ class Store:
             )
             return {r["chunk_id"]: r["content_hash"] for r in rows}
 
-    async def set_doc_status(self, tenant_id: str, document_id: str, status: str) -> None:
+    async def set_doc_status(self, tenant_id: str, document_id: str, status: str, error: str = "") -> None:
         async with self.pool.acquire() as con:
             await con.execute(
-                "UPDATE documents SET status=$3 WHERE tenant_id=$1 AND document_id=$2",
-                tenant_id, document_id, status,
+                """UPDATE documents SET status=$3, compile_error=$4, updated_at=now()
+                   WHERE tenant_id=$1 AND document_id=$2""",
+                tenant_id, document_id, status, error[:4000],
             )
 
     async def entity_candidates_in_block(

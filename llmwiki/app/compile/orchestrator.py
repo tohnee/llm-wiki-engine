@@ -10,7 +10,7 @@ from app.core.config import get_settings
 from app.core.tenant import TenantContext
 from app.core.schema_layer import SchemaStore, TenantSchema
 from app.db.store import Store
-from app.models.schema import DocStatus, CompileDepth, Fact, Entity
+from app.models.schema import DocStatus, CompileDepth, Fact, Entity, Document
 from app.compile.dag import CompileBus
 from app.compile.manifest import Manifest, ChunkArtifacts
 from app.compile.workers.l1_chunk_span import build_chunks_and_spans
@@ -28,6 +28,8 @@ async def compile_document_inline(
     store: Store, bus: CompileBus, ctx: TenantContext,
     document_id: str, markdown: str, depth: CompileDepth = CompileDepth.D1,
     manifest: Manifest | None = None, schema: TenantSchema | None = None,
+    title: str | None = None, source_uri: str = "inline://markdown",
+    page_map: dict[int, int] | list[tuple[int, int]] | None = None,
 ) -> dict:
     """编译入口。
     schema: 可选;不传则按 tenant_id 自动从 SchemaStore 加载(失败回退默认)。
@@ -42,10 +44,16 @@ async def compile_document_inline(
             print(f"[compile] load schema failed (fallback to default): {e}", flush=True)
             schema = TenantSchema(tenant_id=tenant_id)
     await store.ensure_tenant_partition(tenant_id)
+    await store.upsert_document(tenant_id, Document(
+        document_id=document_id, tenant_id=tenant_id,
+        title=title or document_id, source_uri=source_uri,
+        status=DocStatus.UPLOADED, depth=depth,
+        page_count=max((int(p) for _, p in (page_map.items() if isinstance(page_map, dict) else (page_map or []))), default=0),
+    ))
     await store.set_doc_status(tenant_id, document_id, DocStatus.PARSING.value)
 
     # ---- L1: chunk/span + embedding ----
-    chunks, spans = build_chunks_and_spans(tenant_id, document_id, markdown)
+    chunks, spans = build_chunks_and_spans(tenant_id, document_id, markdown, page_map=page_map)
     span_by_chunk = {c.chunk_id: [s for s in spans if s.chunk_id == c.chunk_id] for c in chunks}
 
     # 增量:跳过 hash 未变化的 chunk(manifest 提供精确失效)
@@ -208,6 +216,7 @@ async def compile_document_inline(
         await store.set_doc_status(tenant_id, document_id, DocStatus.QUERYABLE_FULL.value)
     except Exception as e:
         print(f"[compile] L2-L4 pipeline failed for doc {document_id}, keeping queryable_coarse: {e}", flush=True)
+        await store.set_doc_status(tenant_id, document_id, DocStatus.QUERYABLE_COARSE.value, error=str(e))
         import traceback
         traceback.print_exc()
 

@@ -103,3 +103,64 @@ def test_embed_url_handles_v1_suffix(monkeypatch):
         else:
             url = f"{base_n}/v1/embeddings"
         assert url == expected, f"{base} → {url}, expected {expected}"
+
+
+def test_stable_chunk_and_span_ids_are_repeatable(monkeypatch):
+    monkeypatch.setenv("EMBED_MOCK", "1")
+    from app.compile.workers.l1_chunk_span import build_chunks_and_spans
+    md = "# 报告\n## 预算\n第一页内容。\n\n第二页内容。"
+    page_map = {0: 1, md.index("第二页"): 2}
+    c1, s1 = build_chunks_and_spans("t1", "doc1", md, page_map=page_map)
+    c2, s2 = build_chunks_and_spans("t1", "doc1", md, page_map=page_map)
+    assert [c.chunk_id for c in c1] == [c.chunk_id for c in c2]
+    assert [sp.span_id for sp in s1] == [sp.span_id for sp in s2]
+    assert all(c.page_start >= 1 and c.page_end >= 1 for c in c1)
+    assert all(sp.page >= 1 for sp in s1)
+
+
+def test_pipeline_extracts_citations_and_uses_k_param():
+    import inspect
+    from app.query.pipeline import extract_citations, _direct_search_answer
+    assert extract_citations("A [d1:sp1] B [d1:sp1] C [d2:sp2]") == [
+        {"doc_id": "d1", "span_id": "sp1"},
+        {"doc_id": "d2", "span_id": "sp2"},
+    ]
+    src = inspect.getsource(_direct_search_answer)
+    assert '"k": 8' in src
+    assert '"top_k": 8' not in src
+
+
+def test_navigate_awaits_embed_source():
+    import inspect
+    import app.evidence.service as svc
+    src = inspect.getsource(svc.navigate)
+    assert "await embed" in src
+
+
+def test_store_upsert_document_and_status_sql():
+    import asyncio
+    from app.db.store import Store
+    from app.models.schema import Document, DocStatus, CompileDepth
+
+    captured = []
+
+    class FakeCon:
+        async def execute(self, sql, *params):
+            captured.append((sql, params))
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    class FakePool:
+        def acquire(self): return FakeCon()
+
+    async def run():
+        store = Store(FakePool())
+        await store.upsert_document("t1", Document(
+            document_id="d1", tenant_id="t1", title="Doc", source_uri="s3://d1",
+            status=DocStatus.UPLOADED, depth=CompileDepth.D1, page_count=3))
+        await store.set_doc_status("t1", "d1", DocStatus.FAILED.value, error="boom")
+    asyncio.run(run())
+    assert "INSERT INTO documents" in captured[0][0]
+    assert "ON CONFLICT" in captured[0][0]
+    assert "compile_error" in captured[1][0]
+    assert captured[1][1][-1] == "boom"

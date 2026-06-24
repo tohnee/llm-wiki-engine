@@ -20,6 +20,17 @@ from app.query.verify import verify_answer
 
 _S = get_settings()
 
+_CITE_RE = re.compile(r"\[([\w\-]+):([\w\-]+)\]")
+
+
+def extract_citations(answer: str) -> list[dict]:
+    seen = set(); out = []
+    for doc_id, span_id in _CITE_RE.findall(answer or ""):
+        key = (doc_id, span_id)
+        if key not in seen:
+            seen.add(key); out.append({"doc_id": doc_id, "span_id": span_id})
+    return out
+
 ROUTER_SYSTEM = """判断问题复杂度,只输出一个词:
 simple  = 单文档、单点、一次检索即可答
 complex = 多跳推理 / 跨多个文档 / 需要比对
@@ -53,8 +64,9 @@ async def _tool_loop(ctx: TenantContext, question: str, model: str, max_turns: i
     client = EvidenceClient(ctx)
     messages = list(history or [])
     messages.append({"role": "user", "content": question})
+    tool_trace = []
     try:
-        for _ in range(max_turns):
+        for turn in range(max_turns):
             resp = await gw.complete(
                 tenant_id=ctx.tenant_id, model=model, system=ANSWER_SYSTEM,
                 user_content="", messages=messages, tools=TOOLS,
@@ -64,7 +76,7 @@ async def _tool_loop(ctx: TenantContext, question: str, model: str, max_turns: i
             tool_uses = [b for b in resp.content if b.type == "tool_use"]
             if not tool_uses:
                 answer = "".join(b.text for b in resp.content if b.type == "text")
-                return {"answer": answer, "messages": messages}
+                return {"answer": answer, "messages": messages, "tool_trace": tool_trace}
 
             tool_results = []
             for tu in tool_uses:
@@ -72,6 +84,11 @@ async def _tool_loop(ctx: TenantContext, question: str, model: str, max_turns: i
                     out = await client.call(tu.name, tu.input)
                 except Exception as e:  # noqa: BLE001
                     out = {"error": str(e)}
+                tool_trace.append({
+                    "turn": turn + 1, "tool": tu.name, "input": tu.input,
+                    "ok": "error" not in out,
+                    "result_keys": sorted(out.keys()) if isinstance(out, dict) else [],
+                })
                 tool_results.append({
                     "type": "tool_result", "tool_use_id": tu.id,
                     "content": json.dumps(out, ensure_ascii=False)[:8000]})
@@ -83,8 +100,8 @@ async def _tool_loop(ctx: TenantContext, question: str, model: str, max_turns: i
             user_content="", messages=messages + [
                 {"role": "user", "content": "请基于已有证据给出最终回答,若不足请说明。"}],
             priority=Priority.INTERACTIVE, max_tokens=1024)
-        return {"answer": "".join(b.text for b in resp.content if b.type == "text"),
-                "messages": messages}
+        final_answer = "".join(b.text for b in resp.content if b.type == "text")
+        return {"answer": final_answer, "messages": messages, "tool_trace": tool_trace}
     finally:
         await client.aclose()
 
@@ -99,13 +116,16 @@ async def _direct_search_answer(ctx: TenantContext, question: str, model: str,
     gw = get_gateway()
     client = EvidenceClient(ctx)
     try:
-        evidence = await client.call("search", {"query": question, "top_k": 8})
+        evidence = await client.call("search", {"query": question, "k": 8})
+        tool_trace = [{"turn": 1, "tool": "search", "input": {"query": question, "k": 8},
+                       "ok": "error" not in evidence,
+                       "result_keys": sorted(evidence.keys()) if isinstance(evidence, dict) else []}]
         if "error" in evidence:
-            return {"answer": f"检索失败:{evidence['error']}", "messages": []}
+            return {"answer": f"检索失败:{evidence['error']}", "messages": [], "tool_trace": tool_trace}
 
         # tier-0 命中:索引级回答(summary 可答),直接使用
         if evidence.get("tier") == 0 and evidence.get("answer"):
-            return {"answer": evidence["answer"], "messages": []}
+            return {"answer": evidence["answer"], "messages": [], "tool_trace": tool_trace}
 
         spans = evidence.get("spans") or evidence.get("results") or []
         evidence_text = "\n\n".join(
@@ -121,7 +141,7 @@ async def _direct_search_answer(ctx: TenantContext, question: str, model: str,
             user_content="", messages=messages,
             priority=Priority.INTERACTIVE, max_tokens=2048)
         answer = "".join(b.text for b in resp.content if b.type == "text")
-        return {"answer": answer, "messages": messages}
+        return {"answer": answer, "messages": messages, "tool_trace": tool_trace}
     finally:
         await client.aclose()
 
@@ -149,6 +169,7 @@ async def answer(ctx: TenantContext, question: str, memory=None) -> dict:
         res = await _direct_search_answer(ctx, question, _S.model_sonnet, history)
         verdict = await verify_answer(ctx, res["answer"])
         res["verify"] = verdict
+        res["citations"] = extract_citations(res["answer"])
         if memory:
             await memory.append(ctx, "user", question)
             await memory.append(ctx, "assistant", res["answer"])
@@ -168,12 +189,14 @@ async def answer(ctx: TenantContext, question: str, memory=None) -> dict:
 
     verdict = await verify_answer(ctx, res["answer"])
     res["verify"] = verdict
+    res["citations"] = extract_citations(res["answer"])
 
     # 兜底:simple 路径证据不足 → 升级 Agentic 重答一次
     if mode == "simple" and not verdict["sufficient"]:
         res = await _tool_loop(ctx, question, _S.model_sonnet,
                                max_turns=_S.agent_max_tool_turns, history=history)
         res["verify"] = await verify_answer(ctx, res["answer"])
+        res["citations"] = extract_citations(res["answer"])
         res["escalated"] = True
 
     # 持久化本轮(仅文本轮次;隔离由 memory key 保证)

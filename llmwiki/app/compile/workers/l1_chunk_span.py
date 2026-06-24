@@ -7,7 +7,7 @@ chunk ~1200 token(上下文单元),span ~200 token(citation 落点)。
 from __future__ import annotations
 
 import re
-import uuid
+import hashlib
 
 from app.core.config import get_settings
 from app.models.schema import Chunk, Span, SpanType, content_hash
@@ -103,37 +103,86 @@ def _split_spans(chunk_text: str, target: int) -> list[tuple[str, SpanType]]:
     return spans
 
 
+def _stable_id(prefix: str, *parts: object) -> str:
+    h = hashlib.sha256()
+    for p in parts:
+        h.update(str(p).encode("utf-8")); h.update(b"\x00")
+    return f"{prefix}_{h.hexdigest()[:16]}"
+
+
+def _page_for_offset(page_map, offset: int) -> int:
+    """把字符偏移映射到页码。支持 {offset: page} 或 [(offset,page)]。"""
+    if not page_map:
+        return 1
+    items = page_map.items() if isinstance(page_map, dict) else page_map
+    page = 1
+    for start, p in sorted((int(k), int(v)) for k, v in items):
+        if start <= offset:
+            page = p
+        else:
+            break
+    return max(1, page)
+
+
 def build_chunks_and_spans(
-    tenant_id: str, document_id: str, md: str, page_map: dict[int, int] | None = None
+    tenant_id: str, document_id: str, md: str, page_map: dict[int, int] | list[tuple[int, int]] | None = None
 ) -> tuple[list[Chunk], list[Span]]:
-    """page_map: 字符偏移→页码(MinerU 可提供);此处简化为页码 0。"""
+    """Markdown → 稳定 chunk/span。
+
+    chunk_id 基于 document_id + section_path + chunk 序号,内容不变或小改时可被
+    manifest 稳定命中;content_hash 单独表达内容变化。page_map 为 MinerU 字符偏移→页码。
+    """
     chunks: list[Chunk] = []
     spans: list[Span] = []
     span_texts: list[str] = []
     span_objs: list[Span] = []
+    search_from = 0
+    section_ord: dict[str, int] = {}
 
     for section_path, body in _split_by_headings(md):
+        sec_idx = section_ord.get(section_path, 0)
+        section_ord[section_path] = sec_idx + 1
+        chunk_ord = 0
         for ctext in _pack_chunks(section_path, body, _S.chunk_target_tokens, _S.chunk_max_tokens):
-            chunk_id = f"ch_{uuid.uuid4().hex[:16]}"
+            start = md.find(ctext, search_from)
+            if start < 0:
+                start = md.find(ctext)
+            if start < 0:
+                start = search_from
+            end = start + len(ctext)
+            search_from = max(search_from, end)
+            page_start = _page_for_offset(page_map, start)
+            page_end = _page_for_offset(page_map, end)
+            chunk_id = _stable_id("ch", document_id, section_path, sec_idx, chunk_ord)
             chash = content_hash(ctext, _S.prompt_version_extract)
             chunk = Chunk(
                 chunk_id=chunk_id, tenant_id=tenant_id, document_id=document_id,
-                content=ctext, page_start=0, page_end=0,
+                content=ctext, page_start=page_start, page_end=page_end,
                 section_path=section_path, content_hash=chash,
                 summary=truncate_summary(ctext, max_chars=200),
             )
             sp_ids = []
+            span_ord = 0
+            local_from = 0
             for stext, stype in _split_spans(ctext, _S.span_target_tokens):
-                span_id = f"sp_{uuid.uuid4().hex[:16]}"
+                rel = ctext.find(stext, local_from)
+                if rel < 0:
+                    rel = ctext.find(stext)
+                if rel < 0:
+                    rel = 0
+                local_from = max(local_from, rel + len(stext))
+                page = _page_for_offset(page_map, start + rel)
+                span_id = _stable_id("sp", chunk_id, span_ord, content_hash(stext))
                 sp = Span(
                     span_id=span_id, chunk_id=chunk_id, document_id=document_id,
-                    tenant_id=tenant_id, content=stext, page=0, span_type=stype,
+                    tenant_id=tenant_id, content=stext, page=page, span_type=stype,
                 )
                 span_objs.append(sp); span_texts.append(stext); sp_ids.append(span_id)
+                span_ord += 1
             chunk.span_ids = sp_ids
             chunks.append(chunk)
+            chunk_ord += 1
 
-    # 批量 embedding
     vecs = embed_sync(span_texts)
     for sp, v in zip(span_objs, vecs):
         sp.embedding = v
