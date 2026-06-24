@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS spans (
     page          INT  NOT NULL,
     bbox          REAL[4],
     span_type     TEXT NOT NULL DEFAULT 'text',
-    embedding     vector(1024),
+    embedding     vector(1536),
     tsv           tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
     PRIMARY KEY (tenant_id, span_id)
 ) PARTITION BY LIST (tenant_id);
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS entities (
     mention_span_ids TEXT[] NOT NULL DEFAULT '{}',
     document_ids     TEXT[] NOT NULL DEFAULT '{}',
     name_block       TEXT NOT NULL,        -- blocking key: 归一化名首token + type
-    embedding        vector(1024),
+    embedding        vector(1536),
     PRIMARY KEY (tenant_id, entity_id)
 ) PARTITION BY LIST (tenant_id);
 

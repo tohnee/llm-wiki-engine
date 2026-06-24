@@ -63,33 +63,50 @@ async def _embed_openai(texts: list[str]) -> list[list[float]]:
 
     base = _EMBED_BASE_URL.rstrip("/")
     if not base:
-        # 未配置 base_url,降级到零向量(避免抛错)
         return [[0.0] * dim for _ in texts]
-    if base.endswith("/v1") or "/v1/" in base:
-        url = f"{base}/embeddings" if base.endswith("/v1") else f"{base.rstrip('/')}/embeddings"
+    import re as _re
+    if _re.search(r"/v\d+/?$", base) or _re.search(r"/v\d+/", base + "/"):
+        url = f"{base}/embeddings"
     else:
         url = f"{base}/v1/embeddings"
 
-    try:
-        resp = await client.post(
-            url,
-            json={"model": _EMBED_MODEL, "input": texts},
-            headers={"Authorization": f"Bearer {_EMBED_API_KEY}"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        by_index = {d["index"]: d["embedding"] for d in data.get("data", [])}
-        # 维度校验:首次返回的向量维度若与 embed_dim 不一致,记录警告(易踩坑)
-        vecs = [by_index.get(i, [0.0] * dim) for i in range(len(texts))]
-        if vecs and len(vecs[0]) != dim:
-            print(f"[embed] WARNING: model {_EMBED_MODEL} returns dim={len(vecs[0])} "
-                  f"but schema expects {dim}; vector search will be incorrect. "
-                  f"请换 1024 维模型(如 BAAI/bge-m3)或同步修改 schema.sql + embed_dim。",
-                  flush=True)
-        return vecs
-    except Exception as e:
-        print(f"[embed] API call failed, fallback to zero vectors: {e}", flush=True)
-        return [[0.0] * dim for _ in texts]
+    # 分批 + 重试,避免单次 input 过多触发 400/429
+    BATCH = 16
+    out: list[list[float]] = []
+    for start in range(0, len(texts), BATCH):
+        batch = texts[start:start + BATCH]
+        attempts = 3
+        batch_vecs: list[list[float]] | None = None
+        for att in range(attempts):
+            try:
+                resp = await client.post(
+                    url,
+                    json={"model": _EMBED_MODEL, "input": batch},
+                    headers={"Authorization": f"Bearer {_EMBED_API_KEY}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                by_idx = {d["index"]: d["embedding"] for d in data.get("data", [])}
+                bv = [by_idx.get(i, [0.0] * dim) for i in range(len(batch))]
+                # 维度对齐
+                if bv:
+                    actual = len(bv[0])
+                    if actual > dim:
+                        bv = [v[:dim] for v in bv]
+                    elif actual < dim:
+                        bv = [v + [0.0] * (dim - len(v)) for v in bv]
+                batch_vecs = bv
+                break
+            except Exception as e:
+                msg = str(e)
+                if att < attempts - 1 and ("429" in msg or "rate" in msg.lower()):
+                    import asyncio
+                    await asyncio.sleep(2.0 * (att + 1))  # 退避 2s / 4s
+                    continue
+                print(f"[embed] batch {start}-{start+len(batch)} failed: {e}", flush=True)
+                break
+        out.extend(batch_vecs or [[0.0] * dim for _ in batch])
+    return out
 
 
 @lru_cache
@@ -139,15 +156,57 @@ async def embed(texts: list[str]) -> list[list[float]]:
 
 
 def embed_sync(texts: list[str]) -> list[list[float]]:
-    """同步 embedding(用于 sync 上下文中,如 l1_chunk_span)。"""
+    """同步 embedding(用于 sync 上下文中,如 l1_chunk_span)。
+    API 模式使用 httpx 同步客户端直调,与异步 _embed_openai 共享 URL 拼接 + 截断逻辑。"""
     if not texts:
         return []
     dim = _S.embed_dim or 1024
     if _MOCK_EMBED:
         return [[0.0] * dim for _ in texts]
     embedder = _embedder()
-    if embedder == "api" or embedder is None:
-        # sync 模式下 API 不可用,返回零向量
+    # API 模式: httpx 同步调用
+    if embedder == "api":
+        base = _EMBED_BASE_URL.rstrip("/")
+        if not base:
+            return [[0.0] * dim for _ in texts]
+        import re as _re
+        if _re.search(r"/v\d+/?$", base) or _re.search(r"/v\d+/", base + "/"):
+            url = f"{base}/embeddings"
+        else:
+            url = f"{base}/v1/embeddings"
+        # 分批 + 重试: 同步版本
+        BATCH = 16
+        out: list[list[float]] = []
+        with httpx.Client(timeout=30.0) as c:
+            for start in range(0, len(texts), BATCH):
+                batch = texts[start:start + BATCH]
+                bv: list[list[float]] | None = None
+                for att in range(3):
+                    try:
+                        r = c.post(url,
+                                   json={"model": _EMBED_MODEL, "input": batch},
+                                   headers={"Authorization": f"Bearer {_EMBED_API_KEY}"})
+                        r.raise_for_status()
+                        by_idx = {d["index"]: d["embedding"] for d in r.json().get("data", [])}
+                        bv = [by_idx.get(i, [0.0] * dim) for i in range(len(batch))]
+                        if bv:
+                            actual = len(bv[0])
+                            if actual > dim:
+                                bv = [v[:dim] for v in bv]
+                            elif actual < dim:
+                                bv = [v + [0.0] * (dim - len(v)) for v in bv]
+                        break
+                    except Exception as e:
+                        msg = str(e)
+                        if att < 2 and ("429" in msg or "rate" in msg.lower()):
+                            import time as _t
+                            _t.sleep(2.0 * (att + 1))
+                            continue
+                        print(f"[embed_sync] batch {start}-{start+len(batch)} failed: {e}", flush=True)
+                        break
+                out.extend(bv or [[0.0] * dim for _ in batch])
+        return out
+    if embedder is None:
         return [[0.0] * dim for _ in texts]
     vecs = embedder.encode(texts, normalize_embeddings=True)
     return [v.tolist() for v in vecs]

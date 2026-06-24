@@ -40,7 +40,7 @@ class Settings(BaseModel):
     retrieve_candidate_k: int = 50           # 召回候选数(进 rerank 前)
     retrieve_final_k: int = 8                # rerank 后最终条数
     rrf_k: int = 60                          # RRF 平滑常数
-    embed_dim: int = 1024                    # 向量维度(按所选 embedding 模型)
+    embed_dim: int = 1536                    # pgvector 索引上限 2000,doubao-embedding-vision 2048 维客户端截断
 
     # --- 取证循环 ---
     agent_max_tool_turns: int = 8            # agentic 取证最大轮数

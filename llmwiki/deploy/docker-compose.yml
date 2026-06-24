@@ -1,5 +1,11 @@
 version: "3.9"
 
+# 所有应用服务共用 ../.env(运行时 LLM_PROVIDER/OPENAI_*/EMBED_*/MODEL_* 全部从该文件读取)
+# 通过 YAML anchor 让各服务复用同一份 env_file 配置
+x-env: &app-env
+  env_file:
+    - ../.env
+
 services:
   postgres:
     image: docker.m.daocloud.io/pgvector/pgvector:pg16
@@ -27,20 +33,20 @@ services:
     volumes: [miniodata:/data]
 
   evidence:
+    <<: *app-env
     build:
       context: ..
       dockerfile: Dockerfile
     command: uvicorn app.evidence.service:app --host 0.0.0.0 --port 8001
+    # 覆盖 .env 里的 DSN/REDIS_URL,使其指向 compose 内部网络主机名
     environment:
       PG_DSN: postgresql://llmwiki:llmwiki@postgres:5432/llmwiki
       REDIS_URL: redis://redis:6379/0
-      INTERNAL_HMAC_SECRET: dev-internal-secret
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
     ports: ["8001:8001"]
     depends_on: [postgres, redis]
 
   query:
+    <<: *app-env
     build:
       context: ..
       dockerfile: Dockerfile
@@ -49,26 +55,22 @@ services:
       EVIDENCE_URL: http://evidence:8001
       PG_DSN: postgresql://llmwiki:llmwiki@postgres:5432/llmwiki
       REDIS_URL: redis://redis:6379/0
-      INTERNAL_HMAC_SECRET: dev-internal-secret
-      JWT_SECRET: dev-jwt-secret
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
     ports: ["8000:8000"]
     depends_on: [evidence]
 
   admin:
+    <<: *app-env
     build:
       context: ..
       dockerfile: Dockerfile
     command: uvicorn app.admin.service:app --host 0.0.0.0 --port 8002
     environment:
       PG_DSN: postgresql://llmwiki:llmwiki@postgres:5432/llmwiki
-      JWT_SECRET: dev-jwt-secret
-      PLATFORM_ADMIN_KEY: dev-admin-key
     ports: ["8002:8002"]
     depends_on: [postgres]
 
   ingest:
+    <<: *app-env
     build:
       context: ..
       dockerfile: Dockerfile
@@ -76,11 +78,11 @@ services:
     environment:
       PG_DSN: postgresql://llmwiki:llmwiki@postgres:5432/llmwiki
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: dev-jwt-secret
     ports: ["8003:8003"]
     depends_on: [postgres, redis]
 
   compile-worker:
+    <<: *app-env
     build:
       context: ..
       dockerfile: Dockerfile
@@ -88,14 +90,11 @@ services:
     environment:
       PG_DSN: postgresql://llmwiki:llmwiki@postgres:5432/llmwiki
       REDIS_URL: redis://redis:6379/0
-      INTERNAL_HMAC_SECRET: dev-internal-secret
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      MINERU_URL: ${MINERU_URL:-}
     depends_on: [postgres, redis]
 
   scheduler:
     # on_schedule 调度器:周期触发 daily_maintenance(decay / lint / crosslink / 巩固)
+    <<: *app-env
     build:
       context: ..
       dockerfile: Dockerfile
@@ -103,13 +102,10 @@ services:
     environment:
       PG_DSN: postgresql://llmwiki:llmwiki@postgres:5432/llmwiki
       REDIS_URL: redis://redis:6379/0
-      INTERNAL_HMAC_SECRET: dev-internal-secret
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      SCHEDULE_INTERVAL_SEC: ${SCHEDULE_INTERVAL_SEC:-86400}
     depends_on: [postgres, redis]
 
   generation:
+    <<: *app-env
     build:
       context: ..
       dockerfile: Dockerfile
@@ -117,10 +113,6 @@ services:
     environment:
       EVIDENCE_URL: http://evidence:8001
       PG_DSN: postgresql://llmwiki:llmwiki@postgres:5432/llmwiki
-      INTERNAL_HMAC_SECRET: dev-internal-secret
-      JWT_SECRET: dev-jwt-secret
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       GENERATION_OUTPUT_DIR: /data/generated
     volumes: [gendata:/data/generated]
     ports: ["8004:8004"]

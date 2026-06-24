@@ -55,7 +55,7 @@ class TokenBucket:
 
 
 class LLMGateway:
-    def __init__(self, concurrency: int = 16):
+    def __init__(self, concurrency: int = 4):
         self.provider = _S.llm_provider.lower()
         self.mock = _S.llm_mock
         if not self.mock:
@@ -87,7 +87,9 @@ class LLMGateway:
 
     def _bucket(self, tenant_id: str) -> TokenBucket:
         if tenant_id not in self._buckets:
-            self._buckets[tenant_id] = TokenBucket(rate_per_sec=20, capacity=100)
+            # 火山方舟 Agent Plan 套餐对单租户限流较严,降速避免 429
+            # rate=3 req/s, capacity=10(突发可短时到 10 req,稳态 3 req/s)
+            self._buckets[tenant_id] = TokenBucket(rate_per_sec=3, capacity=10)
         return self._buckets[tenant_id]
 
     async def _dispatch(self) -> None:

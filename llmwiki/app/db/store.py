@@ -16,6 +16,7 @@ from app.models.schema import Chunk, Span, Fact, Entity, Relation, Document, Wik
 _S = get_settings()
 
 # 每个新租户分区上需要建立的索引(分区表的索引须建在分区上)
+# pgvector hnsw 索引上限 2000 维,本工程 embed_dim=1536(doubao-embedding-vision 2048 维客户端截断)。
 _PARTITION_INDEXES = """
 CREATE INDEX IF NOT EXISTS {p}_spans_emb ON {p}_spans
     USING hnsw (embedding vector_cosine_ops);

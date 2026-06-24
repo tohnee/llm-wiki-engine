@@ -21,6 +21,12 @@ env/
 .env.*.local
 .secrets
 
+# === Vendor docs (含敏感订阅信息) ===
+火山方舟_*.pdf
+火山引擎_*.pdf
+volcengine_*.pdf
+ark_subscription_*.pdf
+
 # === IDE / Editor ===
 .vscode/
 .idea/
