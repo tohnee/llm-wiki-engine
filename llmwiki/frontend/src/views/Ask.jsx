@@ -93,15 +93,24 @@ function renderMarkdown(text) {
 }
 
 export default function Ask() {
-  const [sessionId] = useState(() => "s_" + Math.random().toString(36).slice(2, 10));
+  const [sessionId, setSessionId] = useState(() => localStorage.getItem("llmwiki_last_session") || "s_" + Math.random().toString(36).slice(2, 10));
   const [msgs, setMsgs] = useState([]);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [startedAt, setStartedAt] = useState(null);
   const [elapsed, setElapsed] = useState(0);
+  const [sessions, setSessions] = useState(() => JSON.parse(localStorage.getItem("llmwiki_sessions") || "[]"));
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
+
+  useEffect(() => {
+    localStorage.setItem("llmwiki_last_session", sessionId);
+    api.askHistory(sessionId).then((h) => {
+      const turns = h.turns || [];
+      if (turns.length) setMsgs(turns.map((t) => ({ role: t.role, text: t.content })));
+    }).catch(() => {});
+  }, [sessionId]);
 
   // 等待计时器
   useEffect(() => {
@@ -125,6 +134,8 @@ export default function Ask() {
     console.log("%c  📦  payload",  "color:#8A8780", { question: text, session_id: sessionId });
     console.groupEnd();
 
+    const nextSessions = [sessionId, ...sessions.filter((x) => x !== sessionId)].slice(0, 8);
+    setSessions(nextSessions); localStorage.setItem("llmwiki_sessions", JSON.stringify(nextSessions));
     setMsgs((m) => [...m, { role: "user", text }]);
     setQ("");
     setBusy(true);
@@ -196,6 +207,12 @@ export default function Ask() {
       <div className="session-bar">
         <span>会话 <span className="session-id">{sessionId}</span></span>
         <div className="row" style={{ gap: 8 }}>
+          {sessions.length > 0 && (
+            <select className="select" value={sessionId} onChange={(e) => { setMsgs([]); setSessionId(e.target.value); }} style={{ height: 30, fontSize: 12 }}>
+              {[sessionId, ...sessions.filter((x) => x !== sessionId)].map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          <button className="btn ghost sm" onClick={() => { const id = "s_" + Math.random().toString(36).slice(2, 10); setMsgs([]); setSessionId(id); }}>新会话</button>
           {msgs.length === 0 ? (
             <button className="btn ghost sm" onClick={loadMockHistory}>载入演示对话</button>
           ) : (

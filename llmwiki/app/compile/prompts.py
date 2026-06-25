@@ -20,7 +20,7 @@ EXTRACT_SYSTEM = """你是知识编译器的抽取模块。从给定的文档片
 }"""
 
 RELATION_SYSTEM = """你从已抽取的实体与事实中归纳实体间关系。
-关系类型限定:works_for / owns / develops / depends_on / references / belongs_to / part_of / causes。
+关系类型限定:uses / depends_on / contradicts / caused_by / fixed_by / superseded_by / references / related_to / works_for / owns / develops / belongs_to / part_of / causes。
 每条关系必须标注支撑它的 span 下标。只输出 JSON:
 {"relations":[{"source":"","relation_type":"","target":"","source_span_index":[0]}]}"""
 
@@ -37,7 +37,8 @@ RESOLVE_SYSTEM = """判断两个实体是否指代同一真实世界对象。
 # ---- Schema 感知的 prompt 构建器(把 TenantSchema 的类型/规则注入编译) ----
 
 _DEFAULT_ENTITY_TYPES = ["org", "person", "product", "project", "location", "time", "concept"]
-_DEFAULT_RELATION_TYPES = ["works_for", "owns", "develops", "depends_on", "references",
+_DEFAULT_RELATION_TYPES = ["uses", "depends_on", "contradicts", "caused_by", "fixed_by", "superseded_by",
+                           "references", "related_to", "works_for", "owns", "develops",
                            "belongs_to", "part_of", "causes"]
 
 
@@ -58,7 +59,7 @@ def build_relation_system(relation_types: list[str] | None = None, custom_rules:
     types = relation_types or _DEFAULT_RELATION_TYPES
     types_str = " / ".join(types)
     system = RELATION_SYSTEM.replace(
-        "works_for / owns / develops / depends_on / references / belongs_to / part_of / causes",
+        "uses / depends_on / contradicts / caused_by / fixed_by / superseded_by / references / related_to / works_for / owns / develops / belongs_to / part_of / causes",
         types_str)
     if custom_rules and custom_rules.strip():
         system += f"\n\n额外规则(租户自定义):\n{custom_rules.strip()}"

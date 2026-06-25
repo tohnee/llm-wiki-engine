@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.core.auth import auth_context
-from app.db.store import Store
+from app.db.store import Store, compile_depth_capabilities
 from app.db.auth_store import AuthStore
 from app.compile.dag import CompileBus, CompileMsg
 from app.compile.dag import unit_hash
@@ -125,12 +125,27 @@ async def list_docs(authorization: str = Header(...)):
     return [dict(r) for r in rows]
 
 
+@app.get("/compile-depths")
+async def compile_depths(authorization: str = Header(...)):
+    auth_context(authorization)
+    return {d: compile_depth_capabilities(d) for d in ("D0", "D1", "D2")}
+
+
+@app.get("/documents/{document_id}/preview")
+async def doc_preview(document_id: str, authorization: str = Header(...)):
+    ctx, _role = auth_context(authorization)
+    preview = await _store.wiki_preview(ctx.tenant_id, document_id)
+    if not preview:
+        raise HTTPException(404, "document not found in tenant scope")
+    return preview
+
+
 @app.get("/documents/{document_id}/status")
 async def doc_status(document_id: str, authorization: str = Header(...)):
     ctx, _role = auth_context(authorization)
     async with _store.pool.acquire() as con:
         row = await con.fetchrow(
-            "SELECT status,depth,page_count FROM documents WHERE tenant_id=$1 AND document_id=$2",
+            "SELECT status,depth,page_count,compile_error,updated_at FROM documents WHERE tenant_id=$1 AND document_id=$2",
             ctx.tenant_id, document_id)
     if not row:
         raise HTTPException(404, "document not found in tenant scope")

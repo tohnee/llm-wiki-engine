@@ -12,6 +12,7 @@ import asyncpg
 
 from app.core.config import get_settings
 from app.models.schema import Chunk, Span, Fact, Entity, Relation, Document, WikiNode
+from app.evidence.typed_graph import normalize_relation_type
 
 _S = get_settings()
 
@@ -34,6 +35,17 @@ CREATE INDEX IF NOT EXISTS {p}_relations_src ON {p}_relations (source_entity);
 _PARTITIONED_TABLES = [
     "documents", "chunks", "spans", "facts", "entities", "relations", "wiki_nodes"
 ]
+
+
+def compile_depth_capabilities(depth: str) -> dict:
+    """Describe what each compile depth contributes to preview, QA, and KG."""
+    d = (depth or "D1").upper()
+    table = {
+        "D0": {"wiki": "draft_summary", "graph": False, "qa": "span_search", "description": "parse + chunk/span + embedding; preview uses section summaries."},
+        "D1": {"wiki": "draft_summary_with_facts", "graph": False, "qa": "span_search + facts/entities", "description": "D0 plus facts/entities/resolution; no relation graph render."},
+        "D2": {"wiki": "rendered_wiki_nodes", "graph": True, "qa": "navigation-first graph + span evidence", "description": "D1 plus typed relations and rendered wiki nodes."},
+    }
+    return table.get(d, table["D1"])
 
 
 def _safe_part(tenant_id: str) -> str:
@@ -231,13 +243,14 @@ class Store:
         async with self.pool.acquire() as con:
             async with con.transaction():
                 for r in relations:
+                    rel_type = normalize_relation_type(r.relation_type)
                     existing = await con.fetchrow(
                         """SELECT relation_id, source_count, source_span_ids
                            FROM relations
                            WHERE tenant_id=$1 AND source_entity=$2
                              AND relation_type=$3 AND target_entity=$4
                            LIMIT 1""",
-                        tenant_id, r.source_entity, r.relation_type, r.target_entity)
+                        tenant_id, r.source_entity, rel_type, r.target_entity)
                     if existing:
                         new_n = (existing["source_count"] or 1) + 1
                         merged_spans = list(dict.fromkeys(
@@ -257,7 +270,7 @@ class Store:
                                 source_span_ids,confidence,source_count,last_confirmed)
                                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                                ON CONFLICT (tenant_id,relation_id) DO NOTHING""",
-                            r.relation_id, tenant_id, r.source_entity, r.relation_type,
+                            r.relation_id, tenant_id, r.source_entity, rel_type,
                             r.target_entity, r.source_span_ids, r.confidence, 1, now)
 
     async def upsert_wiki_nodes(self, tenant_id: str, nodes: list) -> None:
@@ -275,6 +288,82 @@ class Store:
                      content=EXCLUDED.content, provenance_mix=EXCLUDED.provenance_mix""",
                 rows,
             )
+
+
+    async def wiki_preview(self, tenant_id: str, document_id: str) -> dict:
+        """Return a compiled preview for any depth.
+
+        D2 returns rendered wiki_nodes; D0/D1 return a draft preview from chunk summaries so
+        users can inspect compile output immediately after upload.
+        """
+        async with self.pool.acquire() as con:
+            doc = await con.fetchrow(
+                "SELECT document_id,title,status,depth,compile_error FROM documents WHERE tenant_id=$1 AND document_id=$2",
+                tenant_id, document_id)
+            if not doc:
+                return {}
+            nodes = await con.fetch(
+                """SELECT DISTINCT w.node_id,w.title,w.content,w.entity_id,w.provenance_mix,w.tier
+                   FROM wiki_nodes w
+                   JOIN entities e ON e.tenant_id=w.tenant_id AND e.entity_id=w.entity_id
+                   WHERE w.tenant_id=$1 AND $2 = ANY(e.document_ids)
+                   ORDER BY w.title LIMIT 50""",
+                tenant_id, document_id)
+            chunks = await con.fetch(
+                """SELECT chunk_id,section_path,summary,page_start,page_end,tier
+                   FROM chunks WHERE tenant_id=$1 AND document_id=$2
+                   ORDER BY section_path, page_start, chunk_id LIMIT 200""",
+                tenant_id, document_id)
+            facts = await con.fetch(
+                """SELECT fact_id,subject_entity,predicate,object_value,provenance,source_span_ids
+                   FROM facts WHERE tenant_id=$1 AND document_id=$2
+                   ORDER BY fact_id LIMIT 100""",
+                tenant_id, document_id)
+        mode = "wiki_nodes" if nodes else "draft_summary"
+        return {
+            "document": dict(doc), "mode": mode,
+            "depth_explanation": compile_depth_capabilities(doc["depth"]),
+            "wiki_nodes": [dict(r) for r in nodes],
+            "sections": [dict(r) for r in chunks],
+            "facts": [dict(r) for r in facts],
+        }
+
+    async def list_ambiguous_facts(self, tenant_id: str, limit: int = 50) -> list[dict]:
+        async with self.pool.acquire() as con:
+            rows = await con.fetch(
+                """SELECT fact_id,document_id,subject_entity,predicate,object_value,
+                          provenance,contradicts,source_span_ids,stale,superseded_by
+                   FROM facts
+                   WHERE tenant_id=$1 AND provenance='ambiguous' AND NOT stale
+                   ORDER BY source_count DESC, fact_id LIMIT $2""",
+                tenant_id, limit)
+        return [dict(r) for r in rows]
+
+    async def resolve_ambiguous_fact(
+        self, tenant_id: str, fact_id: str, action: str, superseded_by: str | None = None,
+    ) -> dict:
+        """Human review action for ambiguous facts: confirm / reject / supersede."""
+        if action not in {"confirm", "reject", "supersede"}:
+            raise ValueError("action must be confirm|reject|supersede")
+        async with self.pool.acquire() as con:
+            if action == "confirm":
+                row = await con.fetchrow(
+                    """UPDATE facts SET provenance='extracted', contradicts='{}', stale=false,
+                       superseded_by=NULL, last_confirmed=extract(epoch from now())
+                       WHERE tenant_id=$1 AND fact_id=$2 RETURNING fact_id,provenance,stale,superseded_by""",
+                    tenant_id, fact_id)
+            elif action == "reject":
+                row = await con.fetchrow(
+                    """UPDATE facts SET stale=true, last_confirmed=extract(epoch from now())
+                       WHERE tenant_id=$1 AND fact_id=$2 RETURNING fact_id,provenance,stale,superseded_by""",
+                    tenant_id, fact_id)
+            else:
+                row = await con.fetchrow(
+                    """UPDATE facts SET stale=true, superseded_by=$3,
+                       last_confirmed=extract(epoch from now())
+                       WHERE tenant_id=$1 AND fact_id=$2 RETURNING fact_id,provenance,stale,superseded_by""",
+                    tenant_id, fact_id, superseded_by)
+        return dict(row) if row else {}
 
     # ---------------- 读取(强制 tenant_id) ----------------
     async def get_span(self, tenant_id: str, span_id: str) -> Optional[dict]:
@@ -387,9 +476,10 @@ class Store:
                 visited |= frontier
                 next_frontier: set[str] = set()
                 for r in rows:
+                    rel_type = normalize_relation_type(r["relation_type"])
                     edges.append({
-                        "source": r["source_entity"], "relation": r["relation_type"],
-                        "target": r["target_entity"],
+                        "source": r["source_entity"], "relation": rel_type,
+                        "relation_type": rel_type, "target": r["target_entity"],
                         "span_ids": r["source_span_ids"]})
                     for nid in (r["source_entity"], r["target_entity"]):
                         if nid not in visited:
@@ -409,16 +499,37 @@ class Store:
                 seen_e.add(k); uniq_edges.append(e)
         return {"nodes": [dict(r) for r in node_rows], "edges": uniq_edges}
 
+    async def typed_edges(
+        self, tenant_id: str, relation_types: list[str] | None = None,
+        entity_ids: list[str] | None = None, limit: int = 200,
+    ) -> list[dict]:
+        """Return ontology-normalized typed edges for agent traversal and UI filtering."""
+        rels = [normalize_relation_type(r) for r in relation_types] if relation_types else None
+        async with self.pool.acquire() as con:
+            clauses = ["tenant_id=$1"]
+            params: list = [tenant_id]
+            if rels:
+                params.append(rels); clauses.append(f"relation_type = ANY(${len(params)})")
+            if entity_ids:
+                params.append(entity_ids)
+                clauses.append(f"(source_entity = ANY(${len(params)}) OR target_entity = ANY(${len(params)}))")
+            params.append(limit)
+            rows = await con.fetch(
+                f"""SELECT relation_id,source_entity,relation_type,target_entity,source_span_ids,confidence,source_count
+                    FROM relations WHERE {' AND '.join(clauses)} LIMIT ${len(params)}""",
+                *params)
+        return [{
+            "relation_id": r["relation_id"], "source": r["source_entity"],
+            "relation": normalize_relation_type(r["relation_type"]),
+            "relation_type": normalize_relation_type(r["relation_type"]),
+            "target": r["target_entity"], "span_ids": r["source_span_ids"],
+            "confidence": r["confidence"], "source_count": r["source_count"],
+        } for r in rows]
+
     async def export_graph(self, tenant_id: str) -> dict:
-        """导出全租户 KG 为 {nodes, edges},供 graph 导出/可视化。"""
+        """导出全租户 typed KG 为 {nodes, edges},供 graph 导出/可视化。"""
         async with self.pool.acquire() as con:
             nodes = await con.fetch(
                 "SELECT entity_id,name,type FROM entities WHERE tenant_id=$1", tenant_id)
-            edges = await con.fetch(
-                "SELECT source_entity,relation_type,target_entity FROM relations WHERE tenant_id=$1",
-                tenant_id)
-        return {
-            "nodes": [dict(r) for r in nodes],
-            "edges": [{"source": r["source_entity"], "relation": r["relation_type"],
-                       "target": r["target_entity"]} for r in edges],
-        }
+        edges = await self.typed_edges(tenant_id, limit=10000)
+        return {"nodes": [dict(r) for r in nodes], "edges": edges}

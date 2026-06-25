@@ -39,6 +39,7 @@ export default function Documents() {
   const [depth, setDepth] = useState("D1");
   const [docs, setDocs] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
 
   useEffect(() => {
     api.listDocs().then((list) => {
@@ -71,8 +72,16 @@ export default function Documents() {
   async function refresh(id) {
     try {
       const s = await api.docStatus(id);
-      setDocs((d) => d.map((x) => x.document_id === id ? { ...x, status: s.status } : x));
+      setDocs((d) => d.map((x) => x.document_id === id ? { ...x, ...s } : x));
     } catch {}
+  }
+
+  async function openPreview(id) {
+    try {
+      setPreview(await api.docPreview(id));
+    } catch (e) {
+      alert("预览失败: " + e.message);
+    }
   }
 
   return (
@@ -153,6 +162,7 @@ export default function Documents() {
                     <div className="sub mono">{d.document_id}</div>
                   </div>
                   <span className={`badge ${meta.className}`}>{meta.label}</span>
+                  <button className="btn ghost sm" onClick={() => openPreview(d.document_id)}>预览 Wiki</button>
                   <button className="btn ghost sm icon" onClick={() => refresh(d.document_id)} title="刷新状态">
                     <IconRefresh />
                   </button>
@@ -162,6 +172,44 @@ export default function Documents() {
           </div>
         </div>
       </div>
+
+      {preview && (
+        <div className="modal-backdrop" onClick={() => setPreview(null)}>
+          <div className="modal-card wiki-preview" onClick={(e) => e.stopPropagation()}>
+            <div className="card-header">
+              <div>
+                <div className="card-title">{preview.document?.title || "Wiki 预览"}</div>
+                <div className="card-desc">{preview.mode === "wiki_nodes" ? "D2 渲染 Wiki" : "D0/D1 摘要草稿"} · {preview.depth_explanation?.description}</div>
+              </div>
+              <button className="btn ghost sm" onClick={() => setPreview(null)}>关闭</button>
+            </div>
+            {preview.wiki_nodes?.length > 0 ? (
+              preview.wiki_nodes.map((n) => (
+                <section key={n.node_id} className="wiki-node-preview">
+                  <h3>{n.title}</h3>
+                  <pre className="result-pre">{n.content}</pre>
+                </section>
+              ))
+            ) : (
+              <>
+                <label className="label">章节摘要</label>
+                <div className="list">
+                  {(preview.sections || []).slice(0, 30).map((c) => (
+                    <div key={c.chunk_id} className="list-row">
+                      <span className="badge d0">p{c.page_start}-{c.page_end}</span>
+                      <div className="grow">
+                        <div className="title">{c.section_path || "未命名章节"}</div>
+                        <div className="sub">{c.summary}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {preview.facts?.length > 0 && <><label className="label" style={{ marginTop: 12 }}>D1 事实</label><pre className="result-pre code">{JSON.stringify(preview.facts.slice(0, 30), null, 2)}</pre></>}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ====== 右侧: 提示卡 / 深度说明 ====== */}
       <aside className="split-side">

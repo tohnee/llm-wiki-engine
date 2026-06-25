@@ -21,6 +21,11 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "entity_ids": {"type": "array", "items": {"type": "string"}},
          "hops": {"type": "integer"}}, "required": ["entity_ids"]}},
+    {"name": "typed_edges", "description": "按关系类型查询 typed knowledge graph 边。用于回答 uses/depends_on/contradicts/caused_by/fixed_by/superseded_by 等‘怎么相关’的问题。",
+     "input_schema": {"type": "object", "properties": {
+         "relation_types": {"type": "array", "items": {"type": "string"}},
+         "entity_ids": {"type": "array", "items": {"type": "string"}},
+         "limit": {"type": "integer"}}}},
     {"name": "search", "description": "在指定文档范围内做 span 级混合检索,返回候选证据。",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string"},

@@ -25,7 +25,8 @@ class TenantSchema:
     entity_types: list[str] = field(default_factory=lambda: [
         "org", "person", "product", "project", "location", "time", "concept"])
     relation_types: list[str] = field(default_factory=lambda: [
-        "works_for", "owns", "develops", "depends_on", "references",
+        "uses", "depends_on", "contradicts", "caused_by", "fixed_by", "superseded_by",
+        "references", "related_to", "works_for", "owns", "develops",
         "belongs_to", "part_of", "causes", "co_mention"])
     lint_ambiguous_ratio: float = 0.15
     lint_inferred_ratio: float = 0.40

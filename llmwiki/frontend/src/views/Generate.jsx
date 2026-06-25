@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { api } from "../api.js";
 import { SKILL_TEMPLATES, getTemplateInstruction, getDefaultSubType } from "../generation-templates.js";
 
@@ -11,9 +11,16 @@ export default function Generate() {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [docFilter, setDocFilter] = useState("");
+  const [history, setHistory] = useState([]);
 
   const tpl = SKILL_TEMPLATES[type];
   const currentSub = tpl?.subTypes.find((s) => s.id === subType);
+
+  async function loadHistory() {
+    try { const h = await api.generationHistory(); setHistory(h.items || []); } catch {}
+  }
+
+  useEffect(() => { loadHistory(); }, []);
 
   function handleTypeChange(newType) {
     const def = getDefaultSubType(newType);
@@ -39,6 +46,7 @@ export default function Generate() {
       const fn = asFile ? api.generateFile : api.generate;
       const r = await fn(payload);
       setResult(r);
+      loadHistory();
     } catch (e) {
       setResult({ error: e.message });
     } finally {
@@ -161,8 +169,9 @@ export default function Generate() {
                     <span style={{ fontSize: 16 }}>✅</span>
                     <div className="grow">
                       <div className="title">已生成文件</div>
-                      <div className="sub mono">{result.file_path}</div>
+                      <div className="sub mono">{result.file_name || result.file_path}</div>
                     </div>
+                    {result.download_url && <a className="btn ghost sm" href={result.download_url} target="_blank" rel="noreferrer">下载</a>}
                     {result.evidence_count != null && (
                       <span className="badge">证据 {result.evidence_count} 条</span>
                     )}
@@ -236,6 +245,23 @@ export default function Generate() {
           {currentSub?.desc && (
             <div className="muted" style={{ marginTop: 6 }}>{currentSub.desc}</div>
           )}
+        </div>
+
+        <div className="card" style={{ padding: 18 }}>
+          <div className="card-title" style={{ marginBottom: 8, fontSize: 13 }}>生成历史</div>
+          <div className="list compact">
+            {history.length === 0 && <div className="muted">暂无历史生成记录</div>}
+            {history.slice(0, 8).map((h) => (
+              <div className="list-row" key={h.artifact_id || h.created_at}>
+                <span className="badge d0">{h.artifact_type}</span>
+                <div className="grow">
+                  <div className="title">{h.instruction?.slice(0, 32) || h.file_name}</div>
+                  <div className="sub mono">{new Date((h.created_at || 0) * 1000).toLocaleString()}</div>
+                </div>
+                {h.download_url && <a className="btn ghost sm" href={h.download_url} target="_blank" rel="noreferrer">打开</a>}
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="card" style={{ padding: 18 }}>

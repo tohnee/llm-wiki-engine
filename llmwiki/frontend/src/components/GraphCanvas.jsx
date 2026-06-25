@@ -11,11 +11,16 @@ const TYPE_COLORS = {
   project: "#CC785C", product: "#CC785C", person: "#10A37F",
   org: "#2563EB", concept: "#8B5CF6", event: "#EC4899", default: "#A78BFA",
 };
+const RELATION_COLORS = {
+  uses: "#10A37F", depends_on: "#2563EB", contradicts: "#DC2626",
+  caused_by: "#D97706", fixed_by: "#16A34A", superseded_by: "#8B5CF6",
+  references: "#8A8780", related_to: "#B5B2AA", default: "rgba(31,30,29,0.22)",
+};
 
 export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover, width, height }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
-  const stateRef = useRef({ positions: new Map(), velocities: new Map(), raf: null, hovered: null });
+  const stateRef = useRef({ positions: new Map(), velocities: new Map(), raf: null, hovered: null, tick: 0 });
   const [measuredWidth, setMeasuredWidth] = useState(width || 800);
   const [ready, setReady] = useState(false);
 
@@ -52,10 +57,12 @@ export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover,
     cleanNodes.forEach((n, i) => {
       const id = n.entity_id || n.id;
       if (!st.positions.has(id)) {
-        const angle = (i / cleanNodes.length) * Math.PI * 2;
+        let seed = 0; for (const ch of String(id)) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+        const angle = (i / Math.max(1, cleanNodes.length)) * Math.PI * 2 + (seed % 100) / 500;
+        const jitter = ((seed % 17) - 8) * 0.8;
         st.positions.set(id, {
-          x: cx + Math.cos(angle) * r + (Math.random() - 0.5) * 20,
-          y: cy + Math.sin(angle) * r + (Math.random() - 0.5) * 20,
+          x: cx + Math.cos(angle) * (r + jitter),
+          y: cy + Math.sin(angle) * (r + jitter),
         });
         st.velocities.set(id, { x: 0, y: 0 });
       }
@@ -84,15 +91,18 @@ export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover,
     const SPRING = 0.02;
     const SPRING_LEN = 80;
     const CENTER = 0.005;
-    const DAMPING = 0.85;
+    const DAMPING = 0.72;
     const MAX_VEL = 10;
 
     let running = true;
     const pos = st.positions;
     const vel = st.velocities;
 
+    st.tick = 0;
     function tick() {
       if (!running) return;
+      st.tick += 1;
+      let energy = 0;
 
       // 斥力(O(n²) 但 452 节点可接受)
       const ids = cleanNodes.map((n) => n.entity_id || n.id);
@@ -132,6 +142,7 @@ export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover,
         if (v.x < -MAX_VEL) v.x = -MAX_VEL;
         if (v.y > MAX_VEL) v.y = MAX_VEL;
         if (v.y < -MAX_VEL) v.y = -MAX_VEL;
+        energy += Math.abs(v.x) + Math.abs(v.y);
       }
       // 应用速度
       for (const id of ids) {
@@ -142,18 +153,42 @@ export default function GraphCanvas({ nodes = [], edges = [], onSelect, onHover,
         p.y = Math.max(20, Math.min(h - 20, p.y));
       }
       draw();
-      st.raf = requestAnimationFrame(tick);
+      if (st.tick < 360 && energy > 0.08) st.raf = requestAnimationFrame(tick);
     }
 
     function draw() {
       ctx.clearRect(0, 0, w, h);
-      // 画边
-      ctx.strokeStyle = "rgba(31,30,29,0.15)";
-      ctx.lineWidth = 1;
+      // 画 typed edge:颜色 + 箭头 + 关系标签
+      ctx.lineWidth = 1.2;
+      ctx.font = "10px JetBrains Mono, monospace";
       for (const e of cleanEdges) {
         const a = pos.get(e.source); const b = pos.get(e.target);
         if (!a || !b) continue;
+        const rel = e.relation || e.relation_type || "related_to";
+        const color = RELATION_COLORS[rel] || RELATION_COLORS.default;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        const ang = Math.atan2(b.y - a.y, b.x - a.x);
+        const ax = b.x - Math.cos(ang) * 14, ay = b.y - Math.sin(ang) * 14;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - Math.cos(ang - 0.45) * 7, ay - Math.sin(ang - 0.45) * 7);
+        ctx.lineTo(ax - Math.cos(ang + 0.45) * 7, ay - Math.sin(ang + 0.45) * 7);
+        ctx.closePath(); ctx.fill();
+        if (rel !== "related_to" && rel !== "references") {
+          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          ctx.save();
+          ctx.globalAlpha = .92;
+          ctx.fillStyle = "rgba(255,255,255,.82)";
+          const label = rel.replace(/_/g, " ");
+          const tw = ctx.measureText(label).width + 10;
+          ctx.fillRect(mx - tw / 2, my - 8, tw, 15);
+          ctx.fillStyle = color;
+          ctx.textAlign = "center";
+          ctx.fillText(label, mx, my + 3);
+          ctx.restore();
+        }
       }
       // 画节点
       for (const n of cleanNodes) {

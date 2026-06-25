@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseGraphResponse, filterNodes, filterEdges, neighborsOf, countByType, TYPE_META,
+  parseGraphResponse, filterNodes, filterEdges, neighborsOf, countByType, countByRelation, TYPE_META, RELATION_META, normalizeRelation,
 } from "../lib/graph-utils.js";
 
 describe("graph-utils: parseGraphResponse", () => {
@@ -36,6 +36,7 @@ describe("graph-utils: parseGraphResponse", () => {
     const r = { nodes: [{ entity_id: "a" }, { entity_id: "b" }], edges: [{ source: "a", target: "b", relation_type: "depends_on" }] };
     const { edges } = parseGraphResponse(r);
     expect(edges[0].relation).toBe("depends_on");
+    expect(RELATION_META.depends_on.label).toBe("depends on");
   });
 
   it("空数据不崩溃", () => {
@@ -87,6 +88,14 @@ describe("graph-utils: filterEdges", () => {
     expect(r).toHaveLength(1);
     expect(r[0].target).toBe("b");
   });
+
+  it("支持 typed relation 过滤", () => {
+    const edges = [{ source: "a", target: "b", relation: "depends_on" }, { source: "a", target: "b", relation: "uses" }];
+    const visible = [{ entity_id: "a" }, { entity_id: "b" }];
+    const r = filterEdges(edges, visible, "depends_on");
+    expect(r).toHaveLength(1);
+    expect(r[0].relation).toBe("depends_on");
+  });
 });
 
 describe("graph-utils: neighborsOf", () => {
@@ -122,5 +131,25 @@ describe("graph-utils: countByType + TYPE_META", () => {
   it("TYPE_META 覆盖核心类型", () => {
     expect(TYPE_META.project.label).toBe("项目");
     expect(TYPE_META.person.color).toBe("#10A37F");
+  });
+});
+
+
+describe("graph-utils: typed relations", () => {
+  it("normalizeRelation fallback + relation counts", () => {
+    expect(normalizeRelation("depends on")).toBe("depends_on");
+    expect(normalizeRelation("unknown_relation")).toBe("unknown_relation");
+    expect(countByRelation([{ relation: "uses" }, { relation: "uses" }, { relation: "fixed_by" }])).toEqual({ uses: 2, fixed_by: 1 });
+  });
+});
+
+describe("GraphCanvas stabilization source", () => {
+  it("uses bounded ticks and deterministic jitter", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const src = fs.readFileSync(path.join(process.cwd(), "src/components/GraphCanvas.jsx"), "utf8");
+    expect(src).toContain("st.tick < 360");
+    expect(src).toContain("charCodeAt");
+    expect(src).not.toContain("Math.random() - 0.5");
   });
 });

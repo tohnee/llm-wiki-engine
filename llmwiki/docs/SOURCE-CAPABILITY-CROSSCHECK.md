@@ -32,3 +32,13 @@ This inventory maps the two reference streams requested by product review to con
 2. Full audit trail for every operation should be added as an `audit_log` table plus write hooks.
 3. True remote reranker API support is still absent; code now documents the fallback honestly.
 4. MinerU page/bbox fidelity depends on callers passing `page_map`; bbox extraction still needs MinerU coordinates.
+
+## Typed graph upgrade pass
+
+| Typed graph requirement | Implementation |
+|---|---|
+| Backlinks must become typed edges, not generic related links | `app/evidence/typed_graph.py` defines a constrained relation vocabulary and normalizes aliases into typed edges. |
+| Core relation semantics | Supports `uses`, `depends_on`, `contradicts`, `caused_by`, `fixed_by`, `superseded_by`, plus structural fallback relations. |
+| Constraint metadata | Relation specs carry inverse/symmetric/acyclic metadata so traversal and future validators can reason about graph shape. |
+| Agent traversal | Evidence Service exposes `/typed_edges`, and the tool schema exposes `typed_edges` to the query loop. |
+| UI legibility | Graph UI can filter by relation type and renders typed edge labels/arrows instead of plain backlinks. |

@@ -68,6 +68,11 @@ class NeighborsReq(BaseModel):
     entity_ids: list[str]
     hops: int = 1
 
+class TypedEdgesReq(BaseModel):
+    relation_types: list[str] | None = None
+    entity_ids: list[str] | None = None
+    limit: int = 200
+
 class SearchReq(BaseModel):
     query: str
     document_ids: list[str] | None = None
@@ -88,6 +93,10 @@ class LookupEntityReq(BaseModel):
 
 class TocReq(BaseModel):
     doc_id: str
+
+class ResolveFactReq(BaseModel):
+    action: str
+    superseded_by: str | None = None
 
 
 @app.post("/navigate")
@@ -137,6 +146,19 @@ async def neighbors(req: NeighborsReq, x_internal_auth: str = Header(...)):
     return await _store.neighbors(ctx.tenant_id, req.entity_ids, hops=req.hops)
 
 
+@app.post("/typed_edges")
+async def typed_edges(req: TypedEdgesReq, x_internal_auth: str = Header(...)):
+    """Typed KG traversal surface: filter by relation type and/or entity ids.
+    Enables questions like what depends_on X, what was fixed_by Y, and supersession chains.
+    """
+    ctx = await _ctx(x_internal_auth)
+    from app.evidence.typed_graph import ALLOWED_RELATION_TYPES
+    edges = await _store.typed_edges(
+        ctx.tenant_id, relation_types=req.relation_types,
+        entity_ids=req.entity_ids, limit=min(max(req.limit, 1), 1000))
+    return {"relation_types": sorted(ALLOWED_RELATION_TYPES), "edges": edges}
+
+
 @app.get("/graph/export")
 async def graph_export(fmt: str = "json", x_internal_auth: str = Header(...)):
     """导出全租户 KG:fmt = json | graphml | cypher | html。"""
@@ -147,6 +169,25 @@ async def graph_export(fmt: str = "json", x_internal_auth: str = Header(...)):
         raise HTTPException(400, "fmt must be json|graphml|cypher|html")
     return {"format": fmt, "node_count": len(graph["nodes"]),
             "edge_count": len(graph["edges"]), "data": export(graph, fmt)}
+
+
+@app.get("/facts/ambiguous")
+async def ambiguous_facts(limit: int = 50, x_internal_auth: str = Header(...)):
+    ctx = await _ctx(x_internal_auth)
+    return {"facts": await _store.list_ambiguous_facts(ctx.tenant_id, limit=min(max(limit, 1), 200))}
+
+
+@app.post("/facts/{fact_id}/resolve")
+async def resolve_fact(fact_id: str, req: ResolveFactReq, x_internal_auth: str = Header(...)):
+    ctx = await _ctx(x_internal_auth)
+    try:
+        out = await _store.resolve_ambiguous_fact(
+            ctx.tenant_id, fact_id, req.action, superseded_by=req.superseded_by)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not out:
+        raise HTTPException(404, "fact not found in tenant scope")
+    return out
 
 
 @app.get("/status")

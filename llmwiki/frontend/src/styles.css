@@ -1058,3 +1058,35 @@ body::before {
   border: 1px solid rgba(204,120,92,.22);
   box-shadow: 0 20px 50px rgba(15,14,12,.10), inset 0 1px 0 rgba(255,255,255,.88);
 }
+
+/* Typed graph relation chips */
+.relation-badge, .relation-chip {
+  font-family: var(--font-mono);
+  letter-spacing: .02em;
+}
+.relation-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(255,255,255,.72);
+}
+
+/* Modal/wiki preview */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center;
+  background: rgba(31, 30, 29, .28);
+  backdrop-filter: blur(8px);
+}
+.modal-card {
+  width: min(960px, calc(100vw - 40px));
+  max-height: min(82vh, 900px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 28px 80px rgba(31,30,29,.22);
+  padding: 22px;
+}
+.wiki-node-preview h3 { margin: 16px 0 8px; }
+.list.compact .list-row { padding: 8px 0; }

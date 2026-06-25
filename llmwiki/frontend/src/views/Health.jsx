@@ -38,11 +38,24 @@ function makeTrendData(seedFacts) {
 export default function Health() {
   const [s, setS] = useState(DEMO);
   const [raw, setRaw] = useState("");
+  const [ambiguous, setAmbiguous] = useState([]);
+
+  async function loadAmbiguous() {
+    try { const r = await api.ambiguousFacts(); setAmbiguous(r.facts || []); } catch {}
+  }
 
   useEffect(() => {
     api.status().then((d) => { if (d && typeof d.entities === "number") setS({ ...DEMO, ...d }); })
       .catch(() => {});
+    loadAmbiguous();
   }, []);
+
+  async function resolveFact(fact_id, action) {
+    try {
+      await api.resolveFact(fact_id, { action });
+      setAmbiguous((xs) => xs.filter((x) => x.fact_id !== fact_id));
+    } catch (e) { alert("处理失败: " + e.message); }
+  }
 
   const trend = useMemo(() => makeTrendData(s.facts || 100), [s.facts]);
   const hubData = useMemo(() => (s.hubs || []).slice(0, 5).map((h) => ({ name: h.name, degree: h.degree })), [s.hubs]);
@@ -121,6 +134,30 @@ export default function Health() {
               <div className="muted" style={{ fontSize: 11.5 }}>约占 {Math.round(((s.orphan_entities || 0) / Math.max(1, s.entities)) * 100)}%</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card-header">
+          <div>
+            <div className="card-title">矛盾事实待确认</div>
+            <div className="card-desc">用户确认后会写回 facts,不再只停留在健康报表中</div>
+          </div>
+          <button className="btn ghost sm" onClick={loadAmbiguous}>刷新</button>
+        </div>
+        <div className="list">
+          {ambiguous.length === 0 && <div className="muted" style={{ padding: 12 }}>当前没有待确认矛盾事实</div>}
+          {ambiguous.map((f) => (
+            <div className="list-row" key={f.fact_id}>
+              <span className="badge warn">ambiguous</span>
+              <div className="grow">
+                <div className="title">{f.subject_entity} · {f.predicate} · {f.object_value}</div>
+                <div className="sub mono">{f.fact_id} · source spans {(f.source_span_ids || []).join(", ") || "—"}</div>
+              </div>
+              <button className="btn ghost sm" onClick={() => resolveFact(f.fact_id, "confirm")}>确认保留</button>
+              <button className="btn subtle sm" onClick={() => resolveFact(f.fact_id, "reject")}>标记过时</button>
+            </div>
+          ))}
         </div>
       </div>
 
